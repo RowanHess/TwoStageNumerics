@@ -5,6 +5,7 @@ using .GKPSCompleteBipartite
 
 include("MyTree.jl")
 using .MyTree
+ENV["GRB_LICENSE_FILE"] = "./usr/gurobi.lic"
 
 const GUROBI_ENV = Gurobi.Env()
 function alternative_sol_straight(n, m, probs, obj)
