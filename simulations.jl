@@ -574,25 +574,25 @@ function main(m, index)
 
         scenarios = rand(n, m, 1000) .< (probs)
         for f in functions
-            x = read_sol(m, "$dir/$(f["name"])_sol_$m.txt", n)
-            val = get_value(x, scenarios, n, m, probs, obj)
-            open("$dir/$(f["name"])_$m.txt", "a") do io
-                println(io, "$(val)")
+            if isfile("$dir/$(f["name"])_sol_$m.txt")
+                x = read_sol(m, "$dir/$(f["name"])_sol_$m.txt", n)
+                val = get_value(x, scenarios, n, m, probs, obj)
+                open("$dir/$(f["name"])_$m.txt", "a") do io
+                    println(io, "$(val)")
+                end
             end
         end
     else
-        times = []
-        vals = []
         for f in functions
-            open("$dir/$(f["name"])_$m.txt", "r") do io
-                push!(times, parse(Float64, readline(io)))
-                push!(vals, parse(Float64, readline(io)))
-            end
-        end
-        open("$dir/results_$m.txt", "a") do io
-            for (t, v, f) in zip(times, vals, functions)
-                println(io, "$(f["name"]) val: $v")
-                println(io, "$(f["name"]) time: $t")
+            if isfile("$dir/$(f["name"])_sol_$m.txt")
+                open("$dir/$(f["name"])_$m.txt", "r") do io
+                    t = parse(Float64, readline(io))
+                    v = parse(Float64, readline(io))
+                    open("$dir/results_$m.txt", "a") do io
+                        println(io, "$(f["name"]) val: $v")
+                        println(io, "$(f["name"]) time: $t")
+                    end
+                end
             end
         end
     end
