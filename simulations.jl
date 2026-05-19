@@ -617,6 +617,11 @@ function main(m, index)
     end
 end
 
-parse(Int, ARGS[1])
+m = parse(Int, ARGS[1])
 i = parse(Int, ARGS[2])
 main(m, i)
+
+# m = 10
+# for i = 0:9
+#     main(m, i)
+# end

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=16G
+#SBATCH --mem=20G
 #SBATCH --partition=mit_normal
 #SBATCH --time=0-01:00
 #SBATCH -o run_initial.out
