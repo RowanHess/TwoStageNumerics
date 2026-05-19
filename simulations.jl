@@ -6,12 +6,11 @@ using .GKPSCompleteBipartite
 include("MyTree.jl")
 using .MyTree
 ENV["GRB_LICENSE_FILE"] = "../../gurobi.lic"
-
 const GUROBI_ENV = Gurobi.Env()
 function alternative_sol_straight(n, m, probs, obj)
 
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_silent(model)
+    #set_silent(model)
     @variable(model, x[1:n, 1:n+1, 1:m], Bin)
     @constraint(model, c[i=1:n, k=1:m], x[i, i, k] == 0)
     @constraint(model, row[i=1:n], sum(x[i, :, :]) + sum(x[:, i, :]) <=1)
@@ -28,7 +27,7 @@ end
 function point8_sol_straight(n, m, probs, obj)
 
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_silent(model)
+    #set_silent(model)
     
     # Variables: z_{g, i, j, k, l} mapped to dimensions 1 through 5
     # Dim 1: g ∈ A ∪ {0} -> 1:n+1
@@ -86,10 +85,11 @@ end
 
 function linear(n, m, probs, obj, just_obj = true)
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_silent(model)
+    #set_silent(model)
     set_attribute(model, "MemLimit", 15.0)
-    set_time_limit_sec(model, 3500.0)
-    #set_attribute(model, "Method", 0)
+    set_attribute(model, "TimeLimit", 3500.0)
+    set_optimizer_attribute(model, "Threads", 8)
+
     @variable(model, 0<=x[1:n, 1:m]<=1)
     @variable(model, 0<=y[1:n, 1:m]<=1)
     @constraint(model, people[i=1:n], sum(x[i, :]) + sum(y[i, :]) <= 1)
@@ -109,9 +109,11 @@ end
 function one_stage_opt(n, m, probs, obj)
 
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_silent(model)
+    #set_silent(model)
     set_attribute(model, "MemLimit", 15.0)
-    set_time_limit_sec(model, 3500.0)
+    set_attribute(model, "TimeLimit", 3500.0)
+    set_optimizer_attribute(model, "Threads", 8)
+    set_optimizer_attribute(model, "MIPGap", 0.01)
     @variable(model, x[1:n, 1:m], Bin)
     @constraint(model, row[i=1:n], sum(x[i, :]) <=1)
     @constraint(model, house[k=1:m], sum(x[:, k]) <=1)
@@ -124,10 +126,11 @@ end
 
 function fluid(n, m, probs, obj)
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_silent(model)
+    ##set_silent(model)
     set_attribute(model, "MemLimit", 15.0)
-    set_time_limit_sec(model, 3500.0)
-    #set_attribute(model, "Method", 0)
+    set_attribute(model, "TimeLimit", 3500.0)
+    set_optimizer_attribute(model, "MIPGap", 0.01)
+    set_optimizer_attribute(model, "Threads", 8)
     @variable(model, x[1:n, 1:m], Bin)
     @variable(model, 0<=y[1:n, 1:m]<=1)
     @constraint(model, people[i=1:n], sum(x[i, :]) + sum(y[i, :]) <= 1)
@@ -141,97 +144,15 @@ function fluid(n, m, probs, obj)
 end
 
 
-function get_new_x(n, m, p, obj, model, people_dual, house_dual)
-    new_obj = obj .+ (people_dual.+ (p .* reshape(house_dual, (1, m))))
-    @objective(model, Max, sum(model[:x] .* new_obj))
-    optimize!(model)
-
-    return value.(model[:x])
-    
-end
-function get_duals(n, m, s, probs, obj, scenarios, x_val, models)
-    people_duals = zeros((n, s))
-    house_duals = zeros((m, s))
-    Threads.@threads for i = 1:s
-        fix.(models[i][:x], x_val)
-        optimize!(models[i])
-        people_duals[:, i] = dual.(models[i][:people])
-        house_duals[:, i] = dual.(models[i][:houses])
-    end
-    
-    return (sum(people_duals, dims =2)/s, sum(house_duals, dims =2)/s)
-
-end
-function SAA_column(n, m, probs, obj, s=1000)
-    x_val = one_stage_opt(n, m, probs, obj)
-    
-    stage_1_model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_silent(stage_1_model)
-    set_attribute(stage_1_model, "MemLimit", 14.0)
-    set_time_limit_sec(stage_1_model, 3500 / (3 * Int(round(log(n)))))
-    @variable(stage_1_model, 0<=x[1:n, 1:m]<=1)
-    @constraint(stage_1_model, people[i=1:n], sum(x[i, :]) <= 1)
-    @constraint(stage_1_model, houses[j=1:m], sum(x[:, j]) <= 1)
-    set_start_value.(stage_1_model[:x], x_val)
-    scenarios = rand(n, m, s) .< (probs)
-    stage_2_models = []
-    for scen=1:s
-        model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-        set_silent(model)
-        @variable(model, x[1:n, 1:m])
-        @variable(model, 0<=y[1:n, 1:m]<=1)
-        @constraint(model, people[i=1:n], sum(x[i, :]) + sum(y[i, :]) <= 1)
-        @constraint(model, houses[j=1:m], sum((x .* scenarios[:, :, scen])[:, j]) + sum(y[:, j]) <= 1)
-        @objective(model, Max,  sum(y .* obj))
-        
-        push!(stage_2_models, model)
-    end
-
-    people_dual = zeros(n)
-    house_dual = zeros(m)
-    #real_probs = sum(scenarios, dims = 3) / s
-    #println("initiatization complete")
-    old_x = x_val
-    for iter=1:(3 * Int(floor(sqrt(n))))
-        #println(iter)
-        npeople = people_dual
-        (people_dual, house_dual) = get_duals(n, m, s, probs, obj, scenarios, x_val, stage_2_models)
-        #println("std: ", std(objective_value.(stage_2_models)) / 30)
-        #println(sum(objective_value.(stage_2_models))/s)
-        people = 1 .- sum(x_val, dims = 2)
-        houses = 1 .- sum(x_val .* probs, dims = 1)
-        # println(x_val)
-        # println(people)
-        # println(houses)
-        # println(probs)
-        #println(sum(people .* people_dual) + sum(houses .* reshape(house_dual, (1, m))))
-        #println("lower ", sum(x_val .* obj) + sum(objective_value.(stage_2_models))/s)
-        # people_dual = -rand(n)
-        x_val = get_new_x(n, m, probs, obj, stage_1_model, people_dual, house_dual  )
-        if old_x == x_val
-            break
-        end
-        people = 1 .- sum(x_val, dims = 2)
-        houses = 1 .- sum(x_val .* probs, dims = 1)
-        #println("upper ", sum(x_val .* obj) - sum(people .* people_dual) - sum(reshape(houses, (m, 1)) .* house_dual))
-        # println(-sum(people_dual)-sum(house_dual) + objective_value(stage_1_model))
-        
-        
-    end
-
-    return x_val
-
-end
-
-
 function SAA_no_opt(n, m, probs, obj, s=1000)
     scenarios = rand(n, m, s) .< (probs)
     x_val = one_stage_opt(n, m, probs, obj)
 
     model= Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_silent(model)
+    #set_silent(model)
     set_attribute(model, "MemLimit", 15.0)
-    set_time_limit_sec(model, 3500.0)
+    set_attribute(model, "TimeLimit", 3500.0)
+    set_optimizer_attribute(model, "Threads", 8)
     set_optimizer_attribute(model, "MIPGap", 0.01)
     @variable(model, x[1:n, 1:m] , Bin)
     @variable(model, 0<=y[1:n, 1:m, 1:s]<=1)
@@ -423,7 +344,7 @@ end
 function get_value(sol, scenarios, n, m, probs, obj)
     v = 0
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_silent(model)
+    #set_silent(model)
     @variable(model, z[1:n, 1:m])
     @variable(model, 0<=y[1:n, 1:m]<=1)
     @constraint(model, people[i=1:n], sum(sol[i, :]) + sum(y[i, :]) <= 1)
@@ -500,7 +421,6 @@ functions = [
     Dict("name" => "alternative_sol_straight", "requires_fluid" => false, "function" => alternative_sol_straight),
     Dict("name" => "point8_sol_straight", "requires_fluid" => false, "function" => point8_sol_straight),
     Dict("name" => "one_stage_opt", "requires_fluid" => false, "function" => one_stage_opt),
-    Dict("name" => "SAA_column", "requires_fluid" => false, "function" => SAA_column),
     Dict("name" => "SAA_no_opt", "requires_fluid" => false, "function" => SAA_no_opt),
     Dict("name" => "efficient_567", "requires_fluid" => false, "function" => efficient_567),
     Dict("name" => "alt_sol_from_fluid", "requires_fluid" => true, "function" => alt_sol_from_fluid),
@@ -599,7 +519,7 @@ function main(m, index)
 end
 
 
-m = parse(Int, ARGS[1])
-i = parse(Int, ARGS[2])
+m = 300#parse(Int, ARGS[1])
+i = 0#parse(Int, ARGS[2])
 
 main(m, i)

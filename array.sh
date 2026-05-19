@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH -a 1-8
+#SBATCH -a 1-7
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=16G
 #SBATCH --partition=mit_normal
@@ -15,5 +15,5 @@ source ~/.bashrc
 module load julia
 module load gurobi
 
-#Run the script as usual
-julia simulations.jl 10 $SLURM_ARRAY_TASK_ID
+#Run the script as usualf
+julia -t 8 simulations.jl $1 $SLURM_ARRAY_TASK_ID

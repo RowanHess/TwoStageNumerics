@@ -14,5 +14,5 @@ module load julia
 module load gurobi
 
 #Run the script as usual
-julia simulations.jl 10 0
+julia -t 8 simulations.jl $1 0
 
