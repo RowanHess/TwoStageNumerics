@@ -560,13 +560,15 @@ function initialize(m)
 end
 
 functions = [
+     Dict("name" => "one_stage_opt", "requires_fluid" => false, "function" => one_stage_opt),
     Dict("name" => "alternative_sol_straight", "requires_fluid" => false, "function" => alternative_sol_straight),
-    Dict("name" => "point8_sol_straight", "requires_fluid" => false, "function" => point8_sol_straight),
-    Dict("name" => "one_stage_opt", "requires_fluid" => false, "function" => one_stage_opt),
-    Dict("name" => "SAA_no_opt", "requires_fluid" => false, "function" => SAA_no_opt),
-    Dict("name" => "efficient_567", "requires_fluid" => false, "function" => efficient_567),
     Dict("name" => "alt_sol_from_fluid", "requires_fluid" => true, "function" => alt_sol_from_fluid),
+    Dict("name" => "point8_sol_straight", "requires_fluid" => false, "function" => point8_sol_straight),
     Dict("name" => "point_8_from_fluid", "requires_fluid" => true, "function" => point_8_from_fluid),
+    Dict("name" => "efficient_567", "requires_fluid" => false, "function" => efficient_567),
+    Dict("name" => "SAA_no_opt", "requires_fluid" => false, "function" => SAA_no_opt),
+    
+   
 ]
 
 function write_sol(x, name, m)
