@@ -209,68 +209,23 @@ function alt_sol_from_fluid(n, m, probs, obj,x, y)
 
     p = vec(sum(x .* probs, dims = 1))
 
-    mults = min.(3/4, 1/4 ./ p)
+    w0 = vec(sum(x .* obj, dims = 1))
 
-    tree = build_forest(y)
+    α = (obj  .- w0').* (y .> 0) .- (y .== 0)
+    β = (obj .* p') .* (y .> 0) .- (y .== 0)
 
-    function iterate(node, active)
-        #println(node)
-        if length(node.children) == 0
-            return zeros(n, m)
-        end
-        if active
-            return sum([iterate(child, false) for child in node.children])
-        end
-        if node.is_row #node is a person
-            r = rand() * (1 - node.weight_to_parent)
-            mod = zeros(n, m)
-            for child in node.children
-                if r > 0
-                    r -= child.weight_to_parent
-                    if r <= 0
-                        mod += iterate(child, true)
-                        if rand() < mults[child.index] * child.weight_to_parent
-                            mod[:, child.index] .-= x[:, child.index]
-                            mod[node.index, child.index] += 1
-                        end
-                    else
-                        mod += iterate(child, false)
-                    end
-                else
-                    mod += iterate(child, false)
-                end
-            end
-            return mod
-        else #node is a house
-            r = rand() * (1 - node.weight_to_parent)
-            mod = zeros(n, m)
-            for child in node.children
-                if r > 0
-                    r -= child.weight_to_parent
-                    if r <= 0
-                        mod += iterate(child, true)
-                        if rand() < mults[node.index] * child.weight_to_parent
-                            mod[:, node.index] .-= x[:, node.index]
-                            mod[child.index, node.index] += 1
-                        end
-                    else
-                        mod += iterate(child, false)
-                    end
-                else
-                    mod += iterate(child, false)
-                end
-            end
-            return mod
+    model= Model(() -> Gurobi.Optimizer(GUROBI_ENV))
+    @variable(model, 0 <= ϕ[1:n, 1:m])
+    @variable(model, 0 <= ψ[1:n, 1:m])
+    @constraint(model, house[k=1:m], sum(ϕ[:, k]) + sum(ψ[:, k])<=1)
+    @constraint(model, person[i=1:n], sum(ϕ[i, :]) + sum(ψ[i, :])<=1)
 
-        end
+    @objective(model, Max, sum(α .* ϕ) + sum(β .* ψ))
+    optimize!(model)
 
-    end
-    ret = zeros(n, m)
-    ret .+= x
-    for t in tree
-        ret .+= iterate(t, false)
-    end
-    return ret
+    use = sum(value.(ϕ), dims = 1)
+    return value.(ϕ) .+ x .* (1 .- use)
+
 end
 
 function find_c_matrix_greedy(d::AbstractVector{<:Real})
