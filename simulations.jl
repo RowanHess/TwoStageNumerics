@@ -601,7 +601,6 @@ function main(m, index)
                 end
             end
         end
-    else
         for f in functions
             if isfile("$dir/$(f["name"])_sol_$m.txt")
                 open("$dir/$(f["name"])_$m.txt", "r") do io
@@ -614,6 +613,7 @@ function main(m, index)
                 end
             end
         end
+        
     end
 end
 
