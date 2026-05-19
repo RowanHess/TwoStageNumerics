@@ -230,7 +230,7 @@ function alt_sol_from_fluid(n, m, probs, obj,x, y)
                     if r <= 0
                         mod += iterate(child, true)
                         if rand() < mults[child.index] * child.weight_to_parent
-                            mod .-= x[:, child.index]
+                            mod[:, child.index] .-= x[:, child.index]
                             mod[node.index, child.index] += 1
                         end
                     else
@@ -250,7 +250,7 @@ function alt_sol_from_fluid(n, m, probs, obj,x, y)
                     if r <= 0
                         mod += iterate(child, true)
                         if rand() < mults[node.index] * child.weight_to_parent
-                            mod .-= x[:, node.index]
+                            mod[:, node.index] .-= x[:, node.index]
                             mod[child.index, node.index] += 1
                         end
                     else
@@ -272,79 +272,221 @@ function alt_sol_from_fluid(n, m, probs, obj,x, y)
     end
     return ret
 end
+
+function find_c_matrix_greedy(d::AbstractVector{<:Real})
+    k = length(d)
+    c = zeros(Float64, k, k)
+    rem = Float64.(copy(d))
+    S = sum(rem)
+    
+    if maximum(d) * 2 > S + 1e-8
+        error("Condition max(d) * 2 <= sum(d) violated.")
+    end
+
+    while S > 1e-9
+        # Get the indices of the remaining needs, sorted highest to lowest
+        p = sortperm(rem, rev=true)
+        i1, i2 = p[1], p[2]
+        v1, v2 = rem[i1], rem[i2]
+        
+        if v1 < 1e-9; break; end
+        
+        # Safe amount to allocate without violating the max*2 <= sum invariant for remaining items
+        v3 = k >= 3 ? rem[p[3]] : 0.0
+        w = min(v1, v2, (S - 2 * v3) / 2)
+        
+        # Fallback for minor floating point inaccuracies
+        if w < 1e-9; w = min(v1, v2); end 
+        
+        # Distribute the allocation
+        c[i1, i2] += w / 2
+        c[i2, i1] += w / 2
+        
+        rem[i1] -= w
+        rem[i2] -= w
+        S -= 2w
+    end
+    
+    return c
+end
+
+function get_abc(weights, p)
+    k = length(weights)
+    alpha = min.(4/5, 1/5 ./ p)
+    beta = max.(0, p .- 2/5)
+    gamma = ifelse.(p .> 0, (4/5 .- alpha .- p .* beta) ./ p ./ (1 .- p ./ 2), 0)
+
+    a = alpha .* weights
+    b = beta .* weights
+    d = gamma .* weights
+
+    if sum(d) >= 2 * maximum(d)
+        return (a, b, find_c_matrix_greedy(d))
+    else    
+        j = argmax(d)
+        e = sum(d) - maximum(d)
+        g = ifelse.(p .< 2 * p[j], (p[j] .- p) .^ 2, p[j]^2)
+        Δ = p[j] * (1-p[j]/2) * e - 0.5 * sum(g .* d)
+        b[j] += Δ / p[j]
+
+        d[j] = 0
+        c = zeros(k, k)
+        c[j, :] = d
+        return (a, b, c)        
+    end
+
+end
+
 function point_8_from_fluid(n, m, probs, obj, x, y)
     #x, y = fluid(n, m, probs, obj)
 
     p = vec(sum(x .* probs, dims = 1))
 
-    mults = min.(4/5, 1/5 ./ p)
+    tree = MyTree.build_forest(y)
 
-    tree = build_forest(y)
-
-    function iterate(node, active)
+    function iterate(node, active, parent)
         #println(node)
         if length(node.children) == 0
             return zeros(n, m)
         end
-        if active
-            return sum([iterate(child, false) for child in node.children])
-        end
+        
         if node.is_row #node is a person
-            r = rand() * (1 - node.weight_to_parent)
             mod = zeros(n, m)
-            for child in node.children
-                if r > 0
-                    r -= child.weight_to_parent
-                    if r <= 0
-                        mod += iterate(child, true)
-                        if rand() < mults[child.index] * child.weight_to_parent
-                            mod .-= x[:, child.index]
-                            mod[node.index, child.index] += 1
+            if isnothing(parent)
+                selection = []
+                weights = [child.weight_to_parent for child in node.children]
+                probs = [p[child.index] for child in node.children]
+                a, b, c = get_abc(weights, probs)
+                r = rand()
+                for (k, w) in enumerate(a)
+                    if r >= 0 && (r -= w) < 0
+                        mod[:, node.children[k].index] .-= x[:, node.children[k].index]
+                        #println(sum( x[:, node.children[k].index]))
+                        mod[node.index, node.children[k].index] += 1
+                        push!(selection, k)
+                    end
+                end
+                for (k, w) in enumerate(b)
+                    if r >= 0 && (r -= w) < 0
+                        push!(selection, k)
+                    end
+                end
+                L = length(b)
+                for i=1:L, j=1:L
+                    if r >= 0 && (r -= c[i, j]) < 0
+                        push!(selection, i)
+                        push!(selection, j)
+                    end
+                end
+
+                for k=1:L
+                    mod += iterate(node.children[k], k in selection || rand() > (a[k] + b[k] + sum(c[k, :]) + sum(c[:, k]))/p[k], nothing)
+                end
+                
+            elseif active
+                weights = [node.weight_to_parent, [child.weight_to_parent for child in node.children]...]
+                probs = [p[parent], [p[child.index] for child in node.children]...]
+                a, b, c = get_abc(weights, probs)
+                selection = []
+                r = rand() * probs[1]
+                if (r -= a[1]) < 0
+                        mod[:, parent] .-= x[:, parent]
+                        #println(sum(x[:, parent]))
+                        mod[node.index, parent] += 1
+                        push!(selection, 1)
+                elseif (r -= b[1]) < 0
+                    push!(selection, 1)
+                else
+                    for i=1:length(a)
+                        if r>= 0 && (r -= c[1, i] + c[i, 1]) < 0
+                            push!(selection, i)
+                            push!(selection, 1)
+                        end
+                    end
+                    if length(selection) > 0
+                        for i=2:length(probs)
+                            mod += iterate(node.children[i-1], i in selection || rand() > (a[i] + b[i] + sum(c[i, :]) + sum(c[:, i]))/p[i], nothing)
                         end
                     else
-                        mod += iterate(child, false)
+                        mod += iterate(node, false, parent)
                     end
-                else
-                    mod += iterate(child, false)
                 end
-            end
-            return mod
-        else #node is a house
-            r = rand() * (1 - node.weight_to_parent)
-            mod = zeros(n, m)
-            for child in node.children
-                if r > 0
-                    r -= child.weight_to_parent
-                    if r <= 0
-                        mod += iterate(child, true)
-                        if rand() < mults[node.index] * child.weight_to_parent
-                            mod .-= x[:, node.index]
-                            mod[child.index, node.index] += 1
-                        end
-                    else
-                        mod += iterate(child, false)
+            else
+                weights = [node.weight_to_parent, [child.weight_to_parent for child in node.children]...]
+                probs = [p[parent], [p[child.index] for child in node.children]...]
+                a, b, c = get_abc(weights, probs)
+                selection = []
+
+                o = a[1] + b[1] + sum(c[1, :]) + sum(c[:, 1])
+                r = rand() * (1-o)
+                L = length(b)
+
+                for k=2:L
+                    if r >= 0 && (r -= a[k]) < 0
+                        mod[:, node.children[k-1].index] .-= x[:, node.children[k-1].index]
+                        #println(sum(x[:, node.children[k-1].index]))
+                        mod[node.index, node.children[k-1].index] += 1
+                        push!(selection, k)
                     end
-                else
-                    mod += iterate(child, false)
                 end
+                for k=2:L
+                    if r >= 0 && (r -= b[k]) < 0
+                        push!(selection, k)
+                    end
+                end
+
+                for i=2:L, j=2:L
+                    if r >= 0 && (r -= c[i, j]) < 0
+                        push!(selection, i)
+                        push!(selection, j)
+                    end
+                end
+
+                for k=2:L
+                    mod += iterate(node.children[k-1], k in selection || rand() > (a[k] + b[k] + sum(c[k, :]) + sum(c[:, k]))/p[k], nothing)
+                end
+
+
             end
             return mod
 
+        else #node is a house
+            if active
+                return sum([iterate(child, false, nothing) for child in node.children])
+            end
+            r = rand() * (p[node.index] - node.weight_to_parent)
+            mod = zeros(n, m)
+            for child in node.children
+                if r > 0
+                    r -= child.weight_to_parent
+                    if r <= 0
+                        mod += iterate(child, true, node.index)
+                    else
+                        mod += iterate(child, false, node.index)
+                    end
+                else
+                    mod += iterate(child, false, node.index)
+                end
+            end
+            return mod
         end
 
     end
     ret = zeros(n, m)
     ret .+= x
     for t in tree
-        ret .+= iterate(t, false)
+        ret .+= iterate(t, false, nothing)
     end
     return ret
+    
+
+    
 end
 
 function get_value(sol, scenarios, n, m, probs, obj)
     v = 0
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    #set_silent(model)
+    set_silent(model)
     @variable(model, z[1:n, 1:m])
     @variable(model, 0<=y[1:n, 1:m]<=1)
     @constraint(model, people[i=1:n], sum(sol[i, :]) + sum(y[i, :]) <= 1)
@@ -518,8 +660,9 @@ function main(m, index)
     end
 end
 
-
-m = 300#parse(Int, ARGS[1])
-i = 0#parse(Int, ARGS[2])
-
-main(m, i)
+for i=0:length(functions) + 2
+    m = 10#parse(Int, ARGS[1])
+    #i = 0#parse(Int, ARGS[2])
+    println(i)
+    main(m, i)
+end
