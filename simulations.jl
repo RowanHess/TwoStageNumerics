@@ -86,7 +86,7 @@ end
 function linear(n, m, probs, obj, just_obj = true)
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     #set_silent(model)
-    set_attribute(model, "MemLimit", 15.0)
+    set_attribute(model, "MemLimit", 16.0)
     set_attribute(model, "TimeLimit", 3500.0)
     set_optimizer_attribute(model, "Threads", 8)
 
@@ -110,7 +110,7 @@ function one_stage_opt(n, m, probs, obj)
 
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     #set_silent(model)
-    set_attribute(model, "MemLimit", 15.0)
+    set_attribute(model, "MemLimit", 16.0)
     set_attribute(model, "TimeLimit", 3500.0)
     set_optimizer_attribute(model, "Threads", 8)
     set_optimizer_attribute(model, "MIPGap", 0.01)
@@ -127,7 +127,7 @@ end
 function fluid(n, m, probs, obj)
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     ##set_silent(model)
-    set_attribute(model, "MemLimit", 15.0)
+    set_attribute(model, "MemLimit", 16.0)
     set_attribute(model, "TimeLimit", 3500.0)
     set_optimizer_attribute(model, "MIPGap", 0.01)
     set_optimizer_attribute(model, "Threads", 8)
@@ -144,13 +144,13 @@ function fluid(n, m, probs, obj)
 end
 
 
-function SAA_no_opt(n, m, probs, obj, s=1000)
+function SAA_no_opt(n, m, probs, obj, s=200)
     scenarios = rand(n, m, s) .< (probs)
     x_val = one_stage_opt(n, m, probs, obj)
 
     model= Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     #set_silent(model)
-    set_attribute(model, "MemLimit", 15.0)
+    set_attribute(model, "MemLimit", 16.0)
     set_attribute(model, "TimeLimit", 3500.0)
     set_optimizer_attribute(model, "Threads", 8)
     set_optimizer_attribute(model, "MIPGap", 0.01)
@@ -591,7 +591,7 @@ function main(m, index)
         obj = Matrix(CSV.read("$dir/obj_$m.csv", DataFrame))
         probs = Matrix(CSV.read("$dir/probs_$m.csv", DataFrame))
 
-        scenarios = rand(n, m, 1000) .< (probs)
+        scenarios = rand(n, m, 200) .< (probs)
         for f in functions
             if isfile("$dir/$(f["name"])_sol_$m.txt")
                 x = read_sol(m, "$dir/$(f["name"])_sol_$m.txt", n)
@@ -619,7 +619,17 @@ end
 
 m = parse(Int, ARGS[1])
 i = parse(Int, ARGS[2])
-main(m, i)
+if i == 0
+    main(m, i)
+elseif i < 4
+    main(m, 2 * i-1)
+    main(m, 2 * i)
+
+elseif i == 4
+    main(m, 7)
+else
+    main(m, 8)
+end
 
 # m = 10
 # for i = 0:9
