@@ -5,7 +5,7 @@ using .GKPSCompleteBipartite
 
 include("MyTree.jl")
 using .MyTree
-ENV["GRB_LICENSE_FILE"] = "../../gurobi.lic"
+#ENV["GRB_LICENSE_FILE"] = "../../gurobi.lic"
 const GUROBI_ENV = Gurobi.Env()
 function alternative_sol_straight(n, m, probs, obj)
 
@@ -318,10 +318,10 @@ function get_abc(weights, p)
 
 end
 
-function point_8_from_fluid(n, m, probs, obj, x, y)
+function point_8_from_fluid(n, m, p_input, obj, x, y)
     #x, y = fluid(n, m, probs, obj)
 
-    p = vec(sum(x .* probs, dims = 1))
+    p = vec(sum(x .* p_input, dims = 1))
 
     tree = MyTree.build_forest(y)
 
@@ -655,20 +655,22 @@ function main(m, index)
     end
 end
 
-m = parse(Int, ARGS[1])
-i = parse(Int, ARGS[2])
-if i == 0
-    main(m, i)
-elseif i < 4
-    main(m, 2 * i-1)
-    main(m, 2 * i)
+# m = parse(Int, ARGS[1])
+# i = parse(Int, ARGS[2])
+# if i == 0
+#     main(m, i)
+# elseif i < 4
+#     main(m, 2 * i-1)
+#     main(m, 2 * i)
 
-elseif i == 4
-    main(m, 7)
-else
-    main(m, 8)
-end
+# elseif i == 4
+#     main(m, 7)
+# else
+#     main(m, 8)
+# end
 
+
+main(300, 5)
 # m = 10
 # for i = 0:9
 #     main(m, i)
