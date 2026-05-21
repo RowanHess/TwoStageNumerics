@@ -11,6 +11,10 @@ function alternative_sol_straight(n, m, probs, obj)
 
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     #set_silent(model)
+    set_attribute(model, "MemLimit", 16.0)
+    set_attribute(model, "TimeLimit", 3500.0)
+    set_optimizer_attribute(model, "Threads", 8)
+    set_optimizer_attribute(model, "MIPGap", 0.01)
     @variable(model, x[1:n, 1:n+1, 1:m], Bin)
     @constraint(model, c[i=1:n, k=1:m], x[i, i, k] == 0)
     @constraint(model, row[i=1:n], sum(x[i, :, :]) + sum(x[:, i, :]) <=1)
@@ -28,6 +32,10 @@ function point8_sol_straight(n, m, probs, obj)
 
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     #set_silent(model)
+    set_attribute(model, "MemLimit", 16.0)
+    set_attribute(model, "TimeLimit", 3500.0)
+    set_optimizer_attribute(model, "Threads", 8)
+    set_optimizer_attribute(model, "MIPGap", 0.01)
     
     # Variables: z_{g, i, j, k, l} mapped to dimensions 1 through 5
     # Dim 1: g ∈ A ∪ {0} -> 1:n+1
@@ -85,24 +93,27 @@ end
 
 function linear(n, m, probs, obj, just_obj = true)
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    #set_silent(model)
     set_attribute(model, "MemLimit", 16.0)
     set_attribute(model, "TimeLimit", 3500.0)
     set_optimizer_attribute(model, "Threads", 8)
 
-    @variable(model, 0<=x[1:n, 1:m]<=1)
-    @variable(model, 0<=y[1:n, 1:m]<=1)
-    @constraint(model, people[i=1:n], sum(x[i, :]) + sum(y[i, :]) <= 1)
-    @constraint(model, houses[j=1:m], sum((x .* probs)[:, j]) + sum(y[:, j]) <= 1)
-    @constraint(model, people2[j=1:m], sum(x[:, j])<= 1)
-    @objective(model, Max,  sum(y .* obj) + sum(x .* obj))
+    @variable(model, 0 <= x[1:n, 1:m] <= 1)
+    @variable(model, 0 <= y[1:n, 1:m] <= 1)
+
+    @constraint(model, people[i=1:n],
+        sum(x[i,j] + y[i,j] for j in 1:m) <= 1)
+    
+    @constraint(model, houses[j=1:m],
+        sum(probs[i,j] * x[i,j] + y[i,j] for i in 1:n) <= 1)
+    
+    @constraint(model, people2[j=1:m],
+        sum(x[i,j] for i in 1:n) <= 1)
+    
+    @objective(model, Max,
+        sum(obj[i,j] * (x[i,j] + y[i,j]) for i in 1:n, j in 1:m))
 
     optimize!(model)
-    if just_obj
-        return objective_value(model)
-    end
-
-    return value.(x), value.(y)
+    return just_obj ? objective_value(model) : (value.(x), value.(y))
 end
 
 
@@ -131,12 +142,21 @@ function fluid(n, m, probs, obj)
     set_attribute(model, "TimeLimit", 3500.0)
     set_optimizer_attribute(model, "MIPGap", 0.01)
     set_optimizer_attribute(model, "Threads", 8)
-    @variable(model, x[1:n, 1:m], Bin)
-    @variable(model, 0<=y[1:n, 1:m]<=1)
-    @constraint(model, people[i=1:n], sum(x[i, :]) + sum(y[i, :]) <= 1)
-    @constraint(model, houses[j=1:m], sum((x .* probs)[:, j]) + sum(y[:, j]) <= 1)
-    @constraint(model, people2[j=1:m], sum(x[:, j])<= 1)
-    @objective(model, Max,  sum(y .* obj) + sum(x .* obj))
+    @variable(model,  x[1:n, 1:m], Bin)
+    @variable(model, 0 <= y[1:n, 1:m] <= 1)
+
+    @constraint(model, people[i=1:n],
+        sum(x[i,j] + y[i,j] for j in 1:m) <= 1)
+    
+    @constraint(model, houses[j=1:m],
+        sum(probs[i,j] * x[i,j] + y[i,j] for i in 1:n) <= 1)
+    
+    @constraint(model, people2[j=1:m],
+        sum(x[i,j] for i in 1:n) <= 1)
+    
+    @objective(model, Max,
+        sum(obj[i,j] * (x[i,j] + y[i,j]) for i in 1:n, j in 1:m))
+
 
     optimize!(model)
 
@@ -159,9 +179,15 @@ function SAA_no_opt(n, m, probs, obj, s=200)
 
     @constraint(model, people[i=1:n, scen = 1:s], sum(x[i, :]) + sum(y[i, :, scen]) <= 1)
     @constraint(model, stage1[j=1:m], sum(x[:, j]) <= 1)
-    @constraint(model, stage2[j=1:m, scen = 1:s], sum((x .* scenarios[:, :, scen])[:, j]) + sum(y[:, j, scen]) <= 1)
+    @constraint(model, stage2[j=1:m, scen=1:s],
+        sum(x[i,j] for i in 1:n if scenarios[i,j,scen]) +
+        sum(y[i,j,scen] for i in 1:n) <= 1)
 
-    @objective(model, Max, sum(x .* obj) + sum(y .* obj) / s)
+    obj_s = obj ./ s   # precompute once outside the macro
+    @objective(model, Max,
+        sum(obj[i,j]   * x[i,j]       for i in 1:n, j in 1:m) +
+        sum(obj_s[i,j] * y[i,j,scen]  for i in 1:n, j in 1:m, scen in 1:s))
+
     set_start_value.(x, x_val)
     optimize!(model)
     #print(objective_value(model))
@@ -211,8 +237,8 @@ function alt_sol_from_fluid(n, m, probs, obj,x, y)
 
     w0 = vec(sum(x .* obj, dims = 1))
 
-    α = (obj  .- w0').* (y .> 0) .- (y .== 0)
-    β = (obj .* p') .* (y .> 0) .- (y .== 0)
+    α = (obj  .- w0').* (y .> 1e-10) .- (y .< 1e-10)
+    β = (obj .* p') .* (y .> 1e-10) .- (y .< 1e-10)
 
     model= Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     @variable(model, 0 <= ϕ[1:n, 1:m])
@@ -335,7 +361,7 @@ function point_8_from_fluid(n, m, probs, obj, x, y)
                 end
 
                 for k=1:L
-                    mod += iterate(node.children[k], k in selection || rand() > (a[k] + b[k] + sum(c[k, :]) + sum(c[:, k]))/p[k], nothing)
+                    mod += iterate(node.children[k], k in selection || rand() > (a[k] + b[k] + sum(c[k, :]) + sum(c[:, k]))/probs[k], nothing)
                 end
                 
             elseif active
@@ -360,7 +386,7 @@ function point_8_from_fluid(n, m, probs, obj, x, y)
                     end
                     if length(selection) > 0
                         for i=2:length(probs)
-                            mod += iterate(node.children[i-1], i in selection || rand() > (a[i] + b[i] + sum(c[i, :]) + sum(c[:, i]))/p[i], nothing)
+                            mod += iterate(node.children[i-1], i in selection || rand() > (a[i] + b[i] + sum(c[i, :]) + sum(c[:, i]))/probs[i], nothing)
                         end
                     else
                         mod += iterate(node, false, parent)
@@ -398,7 +424,7 @@ function point_8_from_fluid(n, m, probs, obj, x, y)
                 end
 
                 for k=2:L
-                    mod += iterate(node.children[k-1], k in selection || rand() > (a[k] + b[k] + sum(c[k, :]) + sum(c[:, k]))/p[k], nothing)
+                    mod += iterate(node.children[k-1], k in selection || rand() > (a[k] + b[k] + sum(c[k, :]) + sum(c[:, k]))/probs[k], nothing)
                 end
 
 
@@ -439,26 +465,38 @@ function point_8_from_fluid(n, m, probs, obj, x, y)
 end
 
 function get_value(sol, scenarios, n, m, probs, obj)
-    v = 0
+    s = size(scenarios, 3)
+
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     set_silent(model)
-    @variable(model, z[1:n, 1:m])
-    @variable(model, 0<=y[1:n, 1:m]<=1)
-    @constraint(model, people[i=1:n], sum(sol[i, :]) + sum(y[i, :]) <= 1)
-    @constraint(model, houses[j=1:m], sum(z[:, j]) + sum(y[:, j]) <= 1)
-    @objective(model, Max,  sum(y .* obj))
-    for scen in eachslice(scenarios, dims = 3)
 
-        fix.(model[:z], sol .* (scen))
+    @variable(model, 0 <= y[1:n, 1:m] <= 1)
+
+    # RHS is constant across scenarios — computed once
+    @constraint(model, people[i=1:n],
+        sum(y[i,j] for j in 1:m) <= 1 - sum(sol[i,:]))
+
+    # RHS will be updated per scenario
+    @constraint(model, houses[j=1:m],
+        sum(y[i,j] for i in 1:n) <= 1.0)
+
+    @objective(model, Max,
+        sum(obj[i,j] * y[i,j] for i in 1:n, j in 1:m))
+
+    v = 0.0
+    for scen in eachslice(scenarios, dims=3)
+        # m-vector: how much capacity each house loses in this scenario
+        contrib = vec(sum(sol .* scen, dims=1))
+        for j in 1:m
+            set_normalized_rhs(houses[j], 1.0 - contrib[j])
+        end
         optimize!(model)
-
         v += objective_value(model)
-
     end
 
-    return v / size(scenarios)[3] + sum(sol .* obj)
-
+    return v / s + sum(sol .* obj)
 end
+
 
 function generate(m)
     n = Int(floor(m * 1.5))
