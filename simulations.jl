@@ -224,7 +224,7 @@ function efficient_567(n, m, probs, obj)
         end
     end
 
-    p = vec(sum(x .* probs, dims = 1))
+    p = 1 .- vec(sum(x .* probs, dims = 1))
     q = rand(m) .< p
     #println(X, Y)
     return X .* (x_prime * q') + Y .* (y_prime * (1 .- q)')
@@ -233,7 +233,7 @@ end
 function alt_sol_from_fluid(n, m, probs, obj,x, y)
     #x, y = fluid(n, m, probs, obj)
 
-    p = vec(sum(x .* probs, dims = 1))
+    p = 1 .- vec(sum(x .* probs, dims = 1))
 
     w0 = vec(sum(x .* obj, dims = 1))
 
@@ -254,213 +254,125 @@ function alt_sol_from_fluid(n, m, probs, obj,x, y)
 
 end
 
-function find_c_matrix_greedy(d::AbstractVector{<:Real})
-    k = length(d)
-    c = zeros(Float64, k, k)
-    rem = Float64.(copy(d))
-    S = sum(rem)
+function get_abc(
+    y::AbstractMatrix{Float64},
+    obj::AbstractMatrix{Float64},
+    obj_stage_1::AbstractVector{Float64},
+    p::AbstractVector{Float64},
+    tol::Float64 = 1e-9
+)
+    nU, nV = size(y)
     
-    if maximum(d) * 2 > S + 1e-8
-        error("Condition max(d) * 2 <= sum(d) violated.")
-    end
-
-    while S > 1e-9
-        # Get the indices of the remaining needs, sorted highest to lowest
-        p = sortperm(rem, rev=true)
-        i1, i2 = p[1], p[2]
-        v1, v2 = rem[i1], rem[i2]
-        
-        if v1 < 1e-9; break; end
-        
-        # Safe amount to allocate without violating the max*2 <= sum invariant for remaining items
-        v3 = k >= 3 ? rem[p[3]] : 0.0
-        w = min(v1, v2, (S - 2 * v3) / 2)
-        
-        # Fallback for minor floating point inaccuracies
-        if w < 1e-9; w = min(v1, v2); end 
-        
-        # Distribute the allocation
-        c[i1, i2] += w / 2
-        c[i2, i1] += w / 2
-        
-        rem[i1] -= w
-        rem[i2] -= w
-        S -= 2w
+    # 1. Validate tree structure (throws error if cycle is detected)
+    # We run this just to validate the forest as requested
+    forest = MyTree.build_forest(y, tol=tol)
+    
+    # 2. Extract Adjacency Lists in a single O(n*m) scan 
+    # (Matches what build_forest does under the hood)
+    N_S = [Int[] for _ in 1:nU]
+    N_R = [Int[] for _ in 1:nV]
+    
+    for j in 1:nV
+        for i in 1:nU
+            if y[i, j] > tol
+                push!(N_S[i], j)
+                push!(N_R[j], i)
+            end
+        end
     end
     
-    return c
-end
-
-function get_abc(weights, p)
-    k = length(weights)
-    alpha = min.(4/5, 1/5 ./ p)
-    beta = max.(0, p .- 2/5)
-    gamma = ifelse.(p .> 0, (4/5 .- alpha .- p .* beta) ./ p ./ (1 .- p ./ 2), 0)
-
-    a = alpha .* weights
-    b = beta .* weights
-    d = gamma .* weights
-
-    if sum(d) >= 2 * maximum(d)
-        return (a, b, find_c_matrix_greedy(d))
-    else    
-        j = argmax(d)
-        e = sum(d) - maximum(d)
-        g = ifelse.(p .< 2 * p[j], (p[j] .- p) .^ 2, p[j]^2)
-        Δ = p[j] * (1-p[j]/2) * e - 0.5 * sum(g .* d)
-        b[j] += Δ / p[j]
-
-        d[j] = 0
-        c = zeros(k, k)
-        c[j, :] = d
-        return (a, b, c)        
+    # 3. Pre-build exact tuples to force O(|E|) sparse variable generation
+    edges = Tuple{Int, Int}[]
+    for i in 1:nU
+        for k in N_S[i]
+            push!(edges, (i, k))
+        end
     end
-
+    
+    triplets = Tuple{Int, Int, Int}[]
+    for i in 1:nU
+        for k in N_S[i]
+            for l in N_S[i]
+                if k != l # Excludes c_{ikk} as requested
+                    push!(triplets, (i, k, l))
+                end
+            end
+        end
+    end
+    
+    # 4. Initialize JuMP Model
+    model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
+    set_attribute(model, "MemLimit", 16.0)
+    set_attribute(model, "TimeLimit", 3500.0)
+    set_optimizer_attribute(model, "Threads", 8)
+    
+    
+    # 5. Define strictly Sparse Variables (Dict-backed SparseAxisArrays)
+    @variable(model, a[e in edges] >= 0)
+    @variable(model, b[e in edges] >= 0)
+    @variable(model, c[t in triplets] >= 0)
+    
+    # 6. Set the Objective
+    # α_ik  = obj[i, k] - obj_stage_1[k]
+    # β_ik  = p[k] * obj[i, k]
+    # γ_ikl = β_ik + (1 - p[k]) * p[l] * obj[i, l]
+    @objective(model, Max,
+        sum((obj[i, k] - obj_stage_1[k]) * a[(i, k)] +
+            (p[k] * obj[i, k]) * b[(i, k)] 
+            for (i, k) in edges) +
+        sum((p[k] * obj[i, k] + (1 - p[k]) * p[l] * obj[i, l]) * c[(i, k, l)] 
+            for (i, k, l) in triplets)
+    )
+    
+    # 7. Constraint 1: ∀ i ∈ S
+    for i in 1:nU
+        if isempty(N_S[i])
+            continue
+        end
+        # Summing over (i,k,l) for l in N_S[i] and k in N_S[i] covers all combinations seamlessly
+        @constraint(model,
+            sum(a[(i, k)] + b[(i, k)] for k in N_S[i]) + 
+            sum(c[(i, k, l)] for k in N_S[i] for l in N_S[i] if k != l) <= 1
+        )
+    end
+    
+    # 8. Constraint 2: ∀ k ∈ R
+    for k in 1:nV
+        if isempty(N_R[k])
+            continue
+        end
+        # Lookup i ∈ N(k), then get matching `l`s from that `i`
+        @constraint(model,
+            sum(
+                a[(i, k)] + b[(i, k)] + 
+                sum(c[(i, k, l)] + c[(i, l, k)] for l in N_S[i] if l != k)
+            for i in N_R[k]) <= 1
+        )
+    end
+    
+    # Optimize
+    optimize!(model)
+    
+    # Extract results
+    if termination_status(model) == MOI.OPTIMAL
+        # Extract variables if needed, here returning objective value as well
+        return value.(a), value.(b), value.(c)
+    else
+        error("Model did not solve optimally! Status: $(termination_status(model))")
+    end
 end
 
 function point_8_from_fluid(n, m, p_input, obj, x, y)
     #x, y = fluid(n, m, probs, obj)
 
-    p = vec(sum(x .* p_input, dims = 1))
+    p = 1 .- vec(sum(x .* p_input, dims = 1))
 
-    tree = MyTree.build_forest(y)
+    obj_stage_1 = vec(sum(x .* obj, dims = 1))
 
-    function iterate(node, active, parent)
-        #println(node)
-        if length(node.children) == 0
-            return zeros(n, m)
-        end
-        
-        if node.is_row #node is a person
-            mod = zeros(n, m)
-            if isnothing(parent)
-                selection = []
-                weights = [child.weight_to_parent for child in node.children]
-                probs = [p[child.index] for child in node.children]
-                a, b, c = get_abc(weights, probs)
-                r = rand()
-                for (k, w) in enumerate(a)
-                    if r >= 0 && (r -= w) < 0
-                        mod[:, node.children[k].index] .-= x[:, node.children[k].index]
-                        #println(sum( x[:, node.children[k].index]))
-                        mod[node.index, node.children[k].index] += 1
-                        push!(selection, k)
-                    end
-                end
-                for (k, w) in enumerate(b)
-                    if r >= 0 && (r -= w) < 0
-                        push!(selection, k)
-                    end
-                end
-                L = length(b)
-                for i=1:L, j=1:L
-                    if r >= 0 && (r -= c[i, j]) < 0
-                        push!(selection, i)
-                        push!(selection, j)
-                    end
-                end
+    a, b, c = get_abc(y, obj, obj_stage_1, p)
 
-                for k=1:L
-                    mod += iterate(node.children[k], k in selection || rand() > (a[k] + b[k] + sum(c[k, :]) + sum(c[:, k]))/probs[k], nothing)
-                end
-                
-            elseif active
-                weights = [node.weight_to_parent, [child.weight_to_parent for child in node.children]...]
-                probs = [p[parent], [p[child.index] for child in node.children]...]
-                a, b, c = get_abc(weights, probs)
-                selection = []
-                r = rand() * probs[1]
-                if (r -= a[1]) < 0
-                        mod[:, parent] .-= x[:, parent]
-                        #println(sum(x[:, parent]))
-                        mod[node.index, parent] += 1
-                        push!(selection, 1)
-                elseif (r -= b[1]) < 0
-                    push!(selection, 1)
-                else
-                    for i=1:length(a)
-                        if r>= 0 && (r -= c[1, i] + c[i, 1]) < 0
-                            push!(selection, i)
-                            push!(selection, 1)
-                        end
-                    end
-                    if length(selection) > 0
-                        for i=2:length(probs)
-                            mod += iterate(node.children[i-1], i in selection || rand() > (a[i] + b[i] + sum(c[i, :]) + sum(c[:, i]))/probs[i], nothing)
-                        end
-                    else
-                        mod += iterate(node, false, parent)
-                    end
-                end
-            else
-                weights = [node.weight_to_parent, [child.weight_to_parent for child in node.children]...]
-                probs = [p[parent], [p[child.index] for child in node.children]...]
-                a, b, c = get_abc(weights, probs)
-                selection = []
-
-                o = a[1] + b[1] + sum(c[1, :]) + sum(c[:, 1])
-                r = rand() * (1-o)
-                L = length(b)
-
-                for k=2:L
-                    if r >= 0 && (r -= a[k]) < 0
-                        mod[:, node.children[k-1].index] .-= x[:, node.children[k-1].index]
-                        #println(sum(x[:, node.children[k-1].index]))
-                        mod[node.index, node.children[k-1].index] += 1
-                        push!(selection, k)
-                    end
-                end
-                for k=2:L
-                    if r >= 0 && (r -= b[k]) < 0
-                        push!(selection, k)
-                    end
-                end
-
-                for i=2:L, j=2:L
-                    if r >= 0 && (r -= c[i, j]) < 0
-                        push!(selection, i)
-                        push!(selection, j)
-                    end
-                end
-
-                for k=2:L
-                    mod += iterate(node.children[k-1], k in selection || rand() > (a[k] + b[k] + sum(c[k, :]) + sum(c[:, k]))/probs[k], nothing)
-                end
-
-
-            end
-            return mod
-
-        else #node is a house
-            if active
-                return sum([iterate(child, false, nothing) for child in node.children])
-            end
-            r = rand() * (p[node.index] - node.weight_to_parent)
-            mod = zeros(n, m)
-            for child in node.children
-                if r > 0
-                    r -= child.weight_to_parent
-                    if r <= 0
-                        mod += iterate(child, true, node.index)
-                    else
-                        mod += iterate(child, false, node.index)
-                    end
-                else
-                    mod += iterate(child, false, node.index)
-                end
-            end
-            return mod
-        end
-
-    end
-    ret = zeros(n, m)
-    ret .+= x
-    for t in tree
-        ret .+= iterate(t, false, nothing)
-    end
-    return ret
-    
-
+    use = sum(value.(a), dims = 1)
+    return a + x .* (1 .- use)
     
 end
 
@@ -674,22 +586,22 @@ function main(m, index)
     end
 end
 
-# m = parse(Int, ARGS[1])
-# i = parse(Int, ARGS[2])
-# if i == 0
-#     main(m, i)
-# elseif i < 4
-#     main(m, 2 * i-1)
-#     main(m, 2 * i)
+m = parse(Int, ARGS[1])
+i = parse(Int, ARGS[2])
+if i == 0
+    main(m, i)
+elseif i < 4
+    main(m, 2 * i-1)
+    main(m, 2 * i)
 
-# elseif i == 4
-#     main(m, 7)
-# else
-#     main(m, 8)
-# end
+elseif i == 4
+    main(m, 7)
+else
+    main(m, 8)
+end
 
 
-main(300, 6)
+#main(300, 6)
 # m = 10
 # for i = 0:9
 #     main(m, i)
