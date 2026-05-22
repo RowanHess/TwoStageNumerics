@@ -3,16 +3,16 @@
 # Usage: bash submit_pipeline.sh <number>
 # e.g.:  bash submit_pipeline.sh 10
 
-INIT_ID=$(sbatch --parsable initialize.sh $1)
+INIT_ID=$(sbatch --parsable bash/initialize_sparse.sh $1)
 echo "Submitted initialize.sh as job $INIT_ID"
 
-ARRAY_ID=$(sbatch --parsable --dependency=afterok:$INIT_ID array.sh $1)
+ARRAY_ID=$(sbatch --parsable --dependency=afterok:$INIT_ID bash/array_sparse.sh $1)
 echo "Submitted array.sh as job $ARRAY_ID"
 
-ACCUM_ID=$(sbatch --parsable --dependency=afterany:$ARRAY_ID accumulate.sh $1)
+ACCUM_ID=$(sbatch --parsable --dependency=afterany:$ARRAY_ID bash/accumulate_sparse.sh $1)
 echo "Submitted accumulate.sh as job $ACCUM_ID"
 
-#FINAL_ID=$(sbatch --parsable --dependency=afterok:$ACCUM_ID final.sh $1)
+#FINAL_ID=$(sbatch --parsable --dependency=afterok:$ACCUM_ID bash/final.sh $1)
 #echo "Submitted final.sh as job $FINAL_ID"
 
 echo ""

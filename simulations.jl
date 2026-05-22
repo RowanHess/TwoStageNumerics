@@ -3,8 +3,6 @@ using JuMP, Gurobi, CSV, DataFrames
 include("GKPSCompleteBipartite.jl")
 using .GKPSCompleteBipartite
 
-include("MyTree.jl")
-using .MyTree
 ENV["GRB_LICENSE_FILE"] = "../../gurobi.lic"
 const GUROBI_ENV = Gurobi.Env()
 function alternative_sol_straight(n, m, probs, obj)
@@ -265,10 +263,6 @@ function get_abc(
     
     # 1. Validate tree structure (throws error if cycle is detected)
     # We run this just to validate the forest as requested
-    forest = MyTree.build_forest(y, tol=tol)
-    
-    # 2. Extract Adjacency Lists in a single O(n*m) scan 
-    # (Matches what build_forest does under the hood)
     N_S = [Int[] for _ in 1:nU]
     N_R = [Int[] for _ in 1:nV]
     
