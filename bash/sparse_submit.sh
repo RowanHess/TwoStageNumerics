@@ -9,7 +9,7 @@ echo "Submitted initialize.sh as job $INIT_ID"
 ARRAY_ID=$(sbatch --parsable --dependency=afterok:$INIT_ID bash/array_sparse.sh $1)
 echo "Submitted array.sh as job $ARRAY_ID"
 
-ACCUM_ID=$(sbatch --parsable --dependency=afterany:$ARRAY_ID bash/accumulate_sparse.sh $1)
+ACCUM_ID=$(sbatch --parsable --dependency=afterany:$ARRAY_ID bash/acc_sparse.sh $1)
 echo "Submitted accumulate.sh as job $ACCUM_ID"
 
 #FINAL_ID=$(sbatch --parsable --dependency=afterok:$ACCUM_ID bash/final.sh $1)
