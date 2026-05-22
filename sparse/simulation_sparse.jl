@@ -6,7 +6,7 @@ using Gurobi
 
 include("GKPS_sparse.jl")
 using .GKPSCompleteBipartite
-ENV["GRB_LICENSE_FILE"] = "../../gurobi.lic"
+#ENV["GRB_LICENSE_FILE"] = "../../gurobi.lic"
 const GUROBI_ENV = Gurobi.Env()
 
 # Helper to build Adjacency Lists and filter strict zero-weight edges
@@ -586,9 +586,10 @@ function get_value(sol, scenarios::Dict{Tuple{Int,Int}, BitVector}, n, m, probs,
     s = length(first(values(scenarios)))
     N_S, N_R, I, J = get_adj(obj)
     edges = [(i, j) for (i, j) in zip(I, J)]
-
+    errors = 0
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     set_silent(model)
+    set_optimizer_attribute(model, "Threads", 8)
     @variable(model, 0 <= y[e in edges] <= 1)
 
     sol_sums = vec(sum(sol, dims=2))
@@ -618,13 +619,18 @@ function get_value(sol, scenarios::Dict{Tuple{Int,Int}, BitVector}, n, m, probs,
         end
         for j in 1:m
             if haskey(houses_con, j)
-                set_normalized_rhs(houses_con[j], 1.0 - contrib[j])
+                set_normalized_rhs(houses_con[j], max(0, 1.0 - contrib[j]))
             end
         end
         optimize!(model)
-        v += objective_value(model)
+        if termination_status(model) == MOI.OPTIMAL
+            v += objective_value(model)
+        else
+            println("Warning: Scenario $scen skipped due to status $(termination_status(model))")
+            errors += 1
+        end
     end
-    return v / s + sum(sol .* obj)
+    return v / (s - errors) + sum(sol .* obj)
 end
 
 function generate(m)
@@ -691,7 +697,7 @@ function initialize(m)
 
     x, y, val = fluid_data.value
     
-    I_x, J_x, V_x = findnz(x)
+    I_x, J_x, V_x = findnz(round.(x))
     df = DataFrame(i=I_x, j=J_x, x=V_x)
     CSV.write("$dir/fluid_x_$m.csv", df)
     
@@ -864,21 +870,21 @@ end
 
 warmup_compilation()
 
-m = parse(Int, ARGS[1])
-i = parse(Int, ARGS[2])
-if i == 0
-    main(m, i)
-elseif i < 4
-    main(m, 2 * i-1)
-    main(m, 2 * i)
+# m = parse(Int, ARGS[1])
+# i = parse(Int, ARGS[2])
+# if i == 0
+#     main(m, i)
+# elseif i < 4
+#     main(m, 2 * i-1)
+#     main(m, 2 * i)
 
-elseif i == 4
-    main(m, 7)
-else
-    main(m, 8)
-end
-
-# for i=0:8
-#     println(i, "\n\n\n\n\n")
-#     main(10, i)
+# elseif i == 4
+#     main(m, 7)
+# else
+#     main(m, 8)
 # end
+
+for i=0:8
+    println(i, "\n\n\n\n\n")
+    main(10, i)
+end

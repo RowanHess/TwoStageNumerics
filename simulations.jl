@@ -479,7 +479,7 @@ function initialize(m)
     df = DataFrame(probs, :auto)
     CSV.write("$dir/probs_$m.csv", df)
 
-    df = DataFrame(fluid_data.value[1], :auto)
+    df = DataFrame(round.(fluid_data.value[1]), :auto)
     CSV.write("$dir/fluid_x_$m.csv", df)
     df = DataFrame(fluid_data.value[2], :auto)
     CSV.write("$dir/fluid_y_$m.csv", df)
