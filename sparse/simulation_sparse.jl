@@ -435,7 +435,6 @@ function alt_sol_from_fluid(n, m, probs, obj, x, y)
     set_attribute(model, "MemLimit", 16.0)
     set_attribute(model, "TimeLimit", 3500.0)
     set_optimizer_attribute(model, "Threads", 8)
-    set_optimizer_attribute(model, "Method", 1)
     @variable(model, 0 <= ϕ[e in edges])
     @variable(model, 0 <= ψ[e in edges])
     
@@ -817,7 +816,53 @@ function main(m, index)
         end
     end
 end
+function warmup_compilation()
+    
+    # 1. Tiny dummy dimensions
+    n, m = 3, 2
+    
+    # 2. Build tiny sparse matrices
+    I = [1, 2, 3]
+    J = [1, 2, 1]
+    V_obj = [1.0, 0.8, 0.5]
+    V_p = [1.0, 0.5, 0.5]
+    
+    obj = sparse(I, J, V_obj, n, m)
+    probs = sparse(I, J, V_p, n, m)
+    
+    # 3. Warm up basic JuMP & Gurobi internals (suppress output)
+    model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
+    set_silent(model)
+    @variable(model, x_dummy >= 0)
+    @variable(model, y_dummy, Bin)
+    @constraint(model, x_dummy + y_dummy <= 1)
+    @objective(model, Max, x_dummy + 2 * y_dummy)
+    optimize!(model)
 
+    # 4. Warm up YOUR specific functions so their specific types compile
+    # We use a try/catch just in case the tiny data triggers a math edge-case, 
+    # but the compiler will still do its job regardless.
+    try
+        # Hide standard output during warmup
+        redirect_stdout(devnull) do 
+            x_f, y_f, _ = fluid(n, m, probs, obj)
+            alt_sol_from_fluid(n, m, probs, obj, x_f, y_f)
+            alternative_sol_straight(n, m, probs, obj)
+            linear(n, m, probs, obj, true)
+            one_stage_opt(n, m, probs, obj)
+            efficient_567(n, m, probs, obj)
+            
+            # If you are testing the point8 functions, warm them up too:
+            point8_sol_straight(n, m, probs, obj)
+            point_8_from_fluid(n, m, probs, obj, x_f, y_f)
+        end
+    catch e
+        # Ignore warmup errors
+    end
+    
+end
+
+warmup_compilation()
 
 m = parse(Int, ARGS[1])
 i = parse(Int, ARGS[2])
