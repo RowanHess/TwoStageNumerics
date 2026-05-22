@@ -428,39 +428,30 @@ function alt_sol_from_fluid(n, m, probs, obj, x, y)
     N_S, N_R, I_adj, J_adj = get_adj(obj)
     edges = [(i, j) for (i, j) in zip(I_adj, J_adj)]
     
-    # 1. Allocation-free computation of p and w0 (replaces slow sparse broadcasting)
-    p = ones(m)
-    w0 = zeros(m)
-    I_x, J_x, V_x = findnz(x)
-    for (idx, v) in enumerate(V_x)
-        i, j = I_x[idx], J_x[idx]
-        p[j] -= v * probs[i, j]
-        w0[j] += v * obj[i, j]
-    end
+    p = 1.0 .- vec(sum(x .* probs, dims = 1))
+    w0 = vec(sum(x .* obj, dims = 1))
 
-    model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    
-    # 2. Add limits to prevent Concurrent Solver Thread-Spawning latency
+    model= Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     set_attribute(model, "MemLimit", 16.0)
     set_attribute(model, "TimeLimit", 3500.0)
     set_optimizer_attribute(model, "Threads", 8)
+    set_optimizer_attribute(model, "Method", 1)
+    @variable(model, 0 <= ϕ[e in edges])
+    @variable(model, 0 <= ψ[e in edges])
     
-    # 3. Flat Arrays & AffExpr (Eliminates Dictionary Lookups entirely)
-    num_edges = length(edges)
-    @variable(model, ϕ[1:num_edges] >= 0)
-    @variable(model, ψ[1:num_edges] >= 0)
-    
-    house_con = [AffExpr(0.0) for _ in 1:m]
-    person_con = [AffExpr(0.0) for _ in 1:n]
+    for j in 1:m
+        if !isempty(N_R[j])
+            @constraint(model, sum(ϕ[(i,j)] + ψ[(i,j)] for i in N_R[j]) <= 1)
+        end
+    end
+    for i in 1:n
+        if !isempty(N_S[i])
+            @constraint(model, sum(ϕ[(i,j)] + ψ[(i,j)] for j in N_S[i]) <= 1)
+        end
+    end
+
     obj_expr = AffExpr(0.0)
-    
-    for (idx, (i, j)) in enumerate(edges)
-        add_to_expression!(house_con[j], 1.0, ϕ[idx])
-        add_to_expression!(house_con[j], 1.0, ψ[idx])
-        
-        add_to_expression!(person_con[i], 1.0, ϕ[idx])
-        add_to_expression!(person_con[i], 1.0, ψ[idx])
-        
+    for (i,j) in edges
         if y[i,j] > 1e-10
             alpha = obj[i,j] - w0[j]
             beta = obj[i,j] * p[j]
@@ -468,24 +459,17 @@ function alt_sol_from_fluid(n, m, probs, obj, x, y)
             alpha = -1.0
             beta = -1.0
         end
-        add_to_expression!(obj_expr, alpha, ϕ[idx])
-        add_to_expression!(obj_expr, beta, ψ[idx])
+        add_to_expression!(obj_expr, alpha, ϕ[(i,j)])
+        add_to_expression!(obj_expr, beta, ψ[(i,j)])
     end
     
-    for j in 1:m
-        if !isempty(N_R[j]); @constraint(model, house_con[j] <= 1.0); end
-    end
-    for i in 1:n
-        if !isempty(N_S[i]); @constraint(model, person_con[i] <= 1.0); end
-    end
-
     @objective(model, Max, obj_expr)
     optimize!(model)
 
     use = zeros(m)
     phi_res = Dict{Tuple{Int,Int}, Float64}()
-    for (idx, (i, j)) in enumerate(edges)
-        v = value(ϕ[idx])
+    for (i, j) in edges
+        v = value(ϕ[(i,j)])
         if v > 1e-10
             phi_res[(i, j)] = v
             use[j] += v
