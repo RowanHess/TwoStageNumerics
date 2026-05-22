@@ -528,8 +528,27 @@ function generate(m)
     return n, m, obj, probs
 
 end
+function generate2(m)
+    n = Int(floor(m * 1.5))
+    probs = rand(n, m) ./ 2
+    obj = min.(0.99, (3 .+ rand(n, m)) .* probs)
+
+
+    for i=1:n
+        ms = 1 .+ Int.(floor.(rand(2) .* 1.5 .* m))
+        for k in ms
+            if k<= m
+                obj[i, k]= 1
+                probs[i, k] =1
+            end
+        end
+    end
+
+    return n, m, obj, probs
+
+end
 function initialize(m)
-    n, m, obj, probs = generate(m)
+    n, m, obj, probs = generate2(m)
 
     dir = "results_$m"
     mkpath(dir)
@@ -655,22 +674,22 @@ function main(m, index)
     end
 end
 
-m = parse(Int, ARGS[1])
-i = parse(Int, ARGS[2])
-if i == 0
-    main(m, i)
-elseif i < 4
-    main(m, 2 * i-1)
-    main(m, 2 * i)
+# m = parse(Int, ARGS[1])
+# i = parse(Int, ARGS[2])
+# if i == 0
+#     main(m, i)
+# elseif i < 4
+#     main(m, 2 * i-1)
+#     main(m, 2 * i)
 
-elseif i == 4
-    main(m, 7)
-else
-    main(m, 8)
-end
+# elseif i == 4
+#     main(m, 7)
+# else
+#     main(m, 8)
+# end
 
 
-#main(300, 5)
+main(300, 6)
 # m = 10
 # for i = 0:9
 #     main(m, i)
