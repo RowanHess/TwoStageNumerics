@@ -369,13 +369,21 @@ function point_8_from_fluid(n, m, p_input, obj, x, y)
 
     obj_stage_1 = vec(sum(x .* obj, dims = 1))
 
-    a, b, c = get_abc(y, obj, obj_stage_1, p)
+    a, b, c = solve_matching_lp(y, obj, obj_stage_1, p)
+    use = zeros(m)
+    new_a = zeros(n, m)
+    for key in keys(a)
+        val = a[key]
+        (i, k) = key[1]
+        use[k] += val
+        new_a[i, k] = val
+    end
+    #println(sum(new_a, dims = 1))
 
-    use = sum(value.(a), dims = 1)
-    return a + x .* (1 .- use)
+
+    return new_a .+ x .* (1 .- use')
     
 end
-
 function get_value(sol, scenarios, n, m, probs, obj)
     s = size(scenarios, 3)
 
