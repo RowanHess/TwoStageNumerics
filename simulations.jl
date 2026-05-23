@@ -1,4 +1,4 @@
-using JuMP, Gurobi, CSV, DataFrames
+using JuMP, Gurobi, CSV, DataFrames, SparseArrays
 
 include("GKPSCompleteBipartite.jl")
 using .GKPSCompleteBipartite
@@ -18,9 +18,12 @@ function alternative_sol_straight(n, m, probs, obj)
     @constraint(model, row[i=1:n], sum(x[i, :, :]) + sum(x[:, i, :]) <=1)
     @constraint(model, house[k=1:m], sum(x[:, :, k]) <=1)
     
-    real_obj = reshape(obj, (n, 1, m)) .+ (reshape(cat(obj, zeros(m)', dims = 1), (1, n+1, m)) .* (1 .- reshape(probs, (n, 1, m))))
+    real_obj = reshape(obj, (n, 1, m)) .+ zeros(n, n+1, m)# .+ (reshape(cat(obj, zeros(m)', dims = 1), (1, n+1, m)) .* (1 .- reshape(probs, (n, 1, m))))
+
+    
     @objective(model, Max, sum(x .* real_obj))
     optimize!(model)
+    println(real_obj[10, 20, 30], obj[10, 20])
     #println(objective_value(model))
     return reshape(sum(value.(x), dims = 2), (n, m))
 
@@ -447,8 +450,8 @@ function generate2(m)
     pow = 1/log10(n)
     base = rand(n, m)
 
-    probs = (1/2 .+ 1 ./ (1 .- base) .^ pow) ./ (1 .+ 1 ./ (1 .- base) .^ pow .+ 1 ./ (base) .^ pow)
-    obj = 0.1 .+ (1-probs) * 0.9
+    probs = (2) ./ (1 .+ 1 ./ (base) .^ pow)
+    obj = 3 .+ probs
 
     return n, m, obj, probs
 
@@ -516,7 +519,7 @@ function read_sol(m, name, n)
 end
 
 function main(m, index)
-    dir = "results_$m"
+    dir = "fullr_$m"
 
     if index == 0
         initialize(m)
@@ -644,7 +647,8 @@ end
 
 
 #main(300, 6)
-# m = 10
-# for i = 0:9
+# m = 30
+# for i = [0, 1, 3, 6, 8]
+#     println(i)
 #     main(m, i)
 # end
