@@ -444,19 +444,11 @@ function generate(m)
 end
 function generate2(m)
     n = Int(floor(m * 1.5))
-    probs = rand(n, m) ./ 2
-    obj = min.(0.99, (3 .+ rand(n, m)) .* probs)
+    pow = 1/log10(n)
+    base = rand(n, m)
 
-
-    for i=1:n
-        ms = 1 .+ Int.(floor.(rand(2) .* 1.5 .* m))
-        for k in ms
-            if k<= m
-                obj[i, k]= 1
-                probs[i, k] =1
-            end
-        end
-    end
+    probs = (1/2 .+ 1 ./ (1 .- base) .^ pow) ./ (1 .+ 1 ./ (1 .- base) .^ pow .+ 1 ./ (base) .^ pow)
+    obj = 0.1 .+ (1-probs) * 0.9
 
     return n, m, obj, probs
 
@@ -464,7 +456,7 @@ end
 function initialize(m)
     n, m, obj, probs = generate2(m)
 
-    dir = "results_$m"
+    dir = "fullr_$m"
     mkpath(dir)
 
     fluid_data = @timed fluid(n, m, probs, obj)

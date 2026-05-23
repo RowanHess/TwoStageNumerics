@@ -589,7 +589,8 @@ function get_value(sol, scenarios::Dict{Tuple{Int,Int}, BitVector}, n, m, probs,
     errors = 0
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     set_silent(model)
-    set_optimizer_attribute(model, "Threads", 8)
+    set_optimizer_attribute(model, "Method", 1) # Only needs 1 thread per scenario
+    set_optimizer_attribute(model, "Presolve", 0)
     @variable(model, 0 <= y[e in edges] <= 1)
 
     sol_sums = vec(sum(sol, dims=2))
@@ -870,21 +871,21 @@ end
 
 warmup_compilation()
 
-# m = parse(Int, ARGS[1])
-# i = parse(Int, ARGS[2])
-# if i == 0
-#     main(m, i)
-# elseif i < 4
-#     main(m, 2 * i-1)
-#     main(m, 2 * i)
+m = parse(Int, ARGS[1])
+i = parse(Int, ARGS[2])
+if i == 0
+    main(m, i)
+elseif i < 4
+    main(m, 2 * i-1)
+    main(m, 2 * i)
 
-# elseif i == 4
-#     main(m, 7)
-# else
-#     main(m, 8)
-# end
-
-for i=0:8
-    println(i, "\n\n\n\n\n")
-    main(10, i)
+elseif i == 4
+    main(m, 7)
+else
+    main(m, 8)
 end
+
+# for i=0:8
+#     println(i, "\n\n\n\n\n")
+#     main(10, i)
+# end
