@@ -18,12 +18,12 @@ function alternative_sol_straight(n, m, probs, obj)
     @constraint(model, row[i=1:n], sum(x[i, :, :]) + sum(x[:, i, :]) <=1)
     @constraint(model, house[k=1:m], sum(x[:, :, k]) <=1)
     
-    real_obj = reshape(obj, (n, 1, m)) .+ zeros(n, n+1, m)# .+ (reshape(cat(obj, zeros(m)', dims = 1), (1, n+1, m)) .* (1 .- reshape(probs, (n, 1, m))))
+    real_obj = reshape(obj, (n, 1, m)) .+ (reshape(cat(obj, zeros(m)', dims = 1), (1, n+1, m)) .* (1 .- reshape(probs, (n, 1, m))))
 
     
     @objective(model, Max, sum(x .* real_obj))
     optimize!(model)
-    println(real_obj[10, 20, 30], obj[10, 20])
+    #println(real_obj[10, 20, 30], obj[10, 20])
     #println(objective_value(model))
     return reshape(sum(value.(x), dims = 2), (n, m))
 
@@ -161,7 +161,7 @@ function fluid(n, m, probs, obj)
 
     optimize!(model)
 
-    return value.(x), value.(y), objective_value(model)
+    return value.(x), value.(y), objective_bound(model)
 end
 
 
@@ -629,6 +629,21 @@ function warmup_compilation()
     
 end
 
+function redo_fluid(m)
+    dir = "full_r$m"
+    n = Int(floor(m * 1.5))
+
+    obj = Matrix(CSV.read("$dir/obj_$m.csv", DataFrame))
+    probs = Matrix(CSV.read("$dir/probs_$m.csv", DataFrame))
+
+    x, y, b = fluid(n, m, probs, obj)
+
+    lines = readlines("$dir/results_$m.txt")
+    lines[2] = "fluid_ub: $b"
+    write("$dir/results_$m.txt", join(lines, "\n") * "\n")
+
+end
+
 warmup_compilation()
 
 m = parse(Int, ARGS[1])
@@ -641,6 +656,10 @@ elseif i < 4
 
 elseif i == 4
     main(m, 7)
+elseif i == -1
+    for m_new in [10, 30, 100, 300, 1000]
+        redo_fluid(m)
+    end
 else
     main(m, 8)
 end

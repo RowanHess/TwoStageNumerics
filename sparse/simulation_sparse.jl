@@ -6,7 +6,7 @@ using Gurobi
 
 include("GKPS_sparse.jl")
 using .GKPSCompleteBipartite
-#ENV["GRB_LICENSE_FILE"] = "../../gurobi.lic"
+ENV["GRB_LICENSE_FILE"] = "../../gurobi.lic"
 const GUROBI_ENV = Gurobi.Env()
 
 # Helper to build Adjacency Lists and filter strict zero-weight edges
@@ -310,7 +310,7 @@ function fluid(n, m, probs, obj)
         if vx > 1e-10; push!(Ix, e[1]); push!(Jx, e[2]); push!(Vx, vx); end
         if vy > 1e-10; push!(Iy, e[1]); push!(Jy, e[2]); push!(Vy, vy); end
     end
-    return sparse(Ix, Jx, Vx, n, m), sparse(Iy, Jy, Vy, n, m), objective_value(model)
+    return sparse(Ix, Jx, Vx, n, m), sparse(Iy, Jy, Vy, n, m), objective_bound(model)
 end
 
 function SAA_no_opt(n, m, probs, obj, s=200)
@@ -869,8 +869,31 @@ function warmup_compilation()
     
 end
 
-warmup_compilation()
+function redo_fluid(m)
+    dir = "results_$m"
+    n = Int(floor(m * 1.5))
 
+    # Reconstruct sparse matrices from triplet CSVs
+    df_obj = CSV.read("$dir/obj_$m.csv", DataFrame)
+    obj = sparse(df_obj.i, df_obj.j, df_obj.obj, n, m)
+    
+    df_probs = CSV.read("$dir/probs_$m.csv", DataFrame)
+    probs = sparse(df_probs.i, df_probs.j, df_probs.probs, n, m)
+
+    x, y, b = fluid(n, m, probs, obj)
+
+    lines = readlines("$dir/results_$m.txt")
+    lines[2] = "fluid_ub: $b"
+    write("$dir/results_$m.txt", join(lines, "\n") * "\n")
+
+end
+
+
+warmup_compilation()
+# for i=0:8
+#     println(i, "\n\n\n\n\n")
+#     main(10, i)
+# end
 m = parse(Int, ARGS[1])
 i = parse(Int, ARGS[2])
 if i == 0
@@ -881,6 +904,11 @@ elseif i < 4
 
 elseif i == 4
     main(m, 7)
+elseif i == -1
+    for m_new in [10, 30, 100, 300, 1000, 3000, 10000, 30000, 100000]
+
+        redo_fluid(m)
+    end
 else
     main(m, 8)
 end
