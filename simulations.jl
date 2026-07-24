@@ -3,14 +3,14 @@ using JuMP, Gurobi, CSV, DataFrames, SparseArrays
 include("GKPSCompleteBipartite.jl")
 using .GKPSCompleteBipartite
 
-ENV["GRB_LICENSE_FILE"] = "../../gurobi.lic"
+#ENV["GRB_LICENSE_FILE"] = "../../gurobi.lic"
 const GUROBI_ENV = Gurobi.Env()
 function alternative_sol_straight(n, m, probs, obj)
 
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     #set_silent(model)
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
     set_optimizer_attribute(model, "MIPGap", 0.01)
     @variable(model, x[1:n, 1:n+1, 1:m], Bin)
@@ -33,8 +33,8 @@ function point8_sol_straight(n, m, probs, obj)
 
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     #set_silent(model)
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
     set_optimizer_attribute(model, "MIPGap", 0.01)
     
@@ -94,8 +94,8 @@ end
 
 function linear(n, m, probs, obj, just_obj = true)
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
 
     @variable(model, 0 <= x[1:n, 1:m] <= 1)
@@ -122,8 +122,8 @@ function one_stage_opt(n, m, probs, obj)
 
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     #set_silent(model)
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
     set_optimizer_attribute(model, "MIPGap", 0.01)
     @variable(model, x[1:n, 1:m], Bin)
@@ -139,8 +139,8 @@ end
 function fluid(n, m, probs, obj)
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     ##set_silent(model)
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "MIPGap", 0.01)
     set_optimizer_attribute(model, "Threads", 8)
     @variable(model,  x[1:n, 1:m], Bin)
@@ -171,8 +171,8 @@ function SAA_no_opt(n, m, probs, obj, s=200)
 
     model= Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     #set_silent(model)
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
     set_optimizer_attribute(model, "MIPGap", 0.01)
     @variable(model, x[1:n, 1:m] , Bin)
@@ -299,8 +299,8 @@ function get_abc(
     
     # 4. Initialize JuMP Model
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
     
     
@@ -462,11 +462,14 @@ function initialize(m)
     dir = "fullr_$m"
     mkpath(dir)
 
+    linear_data = @timed linear(n, m, probs, obj)
     fluid_data = @timed fluid(n, m, probs, obj)
+    
     touch("$dir/results_$m.txt")
     open("$dir/results_$m.txt", "w") do io
         write(io, "$(fluid_data.time)\n")
         write(io, "fluid_ub: $(fluid_data.value[3])\n")
+        write(io, "linear_time: $(linear.time)\n")
     end
 
     df = DataFrame(obj, :auto)

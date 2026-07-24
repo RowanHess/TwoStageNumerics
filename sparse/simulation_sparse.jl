@@ -6,7 +6,7 @@ using Gurobi
 
 include("GKPS_sparse.jl")
 using .GKPSCompleteBipartite
-ENV["GRB_LICENSE_FILE"] = "../../gurobi.lic"
+#ENV["GRB_LICENSE_FILE"] = "../../gurobi.lic"
 const GUROBI_ENV = Gurobi.Env()
 
 # Helper to build Adjacency Lists and filter strict zero-weight edges
@@ -31,8 +31,8 @@ function alternative_sol_straight(n, m, probs, obj)
     N_S, N_R, I, J = get_adj(obj)
     
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
     set_optimizer_attribute(model, "MIPGap", 0.01)
     
@@ -100,8 +100,8 @@ function point8_sol_straight(n, m, probs, obj)
     N_S, N_R, I, J = get_adj(obj)
     
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
     set_optimizer_attribute(model, "MIPGap", 0.01)
 
@@ -200,8 +200,8 @@ function linear(n, m, probs, obj, just_obj = true)
     edges = [(i, j) for (i, j) in zip(I, J)]
     
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
 
     @variable(model, 0 <= x[e in edges] <= 1)
@@ -243,8 +243,8 @@ function one_stage_opt(n, m, probs, obj)
     edges = [(i, j) for (i, j) in zip(I, J)]
     
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
     set_optimizer_attribute(model, "MIPGap", 0.01)
     
@@ -279,8 +279,8 @@ function fluid(n, m, probs, obj)
     edges = [(i, j) for (i, j) in zip(I, J)]
     
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "MIPGap", 0.01)
     set_optimizer_attribute(model, "Threads", 8)
     
@@ -326,8 +326,8 @@ function SAA_no_opt(n, m, probs, obj, s=200)
     x_val = one_stage_opt(n, m, probs, obj)
 
     model= Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
     set_optimizer_attribute(model, "MIPGap", 0.01)
     
@@ -432,8 +432,8 @@ function alt_sol_from_fluid(n, m, probs, obj, x, y)
     w0 = vec(sum(x .* obj, dims = 1))
 
     model= Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
     @variable(model, 0 <= ϕ[e in edges])
     @variable(model, 0 <= ψ[e in edges])
@@ -515,8 +515,8 @@ function get_abc(y, obj, obj_stage_1::AbstractVector{Float64}, p::AbstractVector
     end
     
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
-    set_attribute(model, "MemLimit", 16.0)
-    set_attribute(model, "TimeLimit", 3500.0)
+    set_attribute(model, "MemLimit", 64.0)
+    set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
     
     @variable(model, a[e in edges] >= 0)
@@ -681,11 +681,13 @@ function initialize(m)
     dir = "results_$m"
     mkpath(dir)
 
+    linear_data = @timed linear(n, m, probs, obj)
     fluid_data = @timed fluid(n, m, probs, obj)
     touch("$dir/results_$m.txt")
     open("$dir/results_$m.txt", "w") do io
         write(io, "$(fluid_data.time)\n")
         write(io, "fluid_ub: $(fluid_data.value[3])\n")
+        write(io, "linear_time: $(linear_data.time)\n")
     end
 
     I_o, J_o, V_o = findnz(obj)
