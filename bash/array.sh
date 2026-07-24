@@ -1,10 +1,10 @@
 #!/bin/bash
 
-#SBATCH -a 1-4
+#SBATCH -a 1-8
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --mem=96G
 #SBATCH --partition=mit_normal
-#SBATCH --time=0-01:00
+#SBATCH --time=0-01:10
 #SBATCH -o run_\%a.out
 #SBATCH -e run_\%a.err
 

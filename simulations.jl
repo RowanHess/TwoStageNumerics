@@ -464,7 +464,7 @@ function initialize(m)
 
     linear_data = @timed linear(n, m, probs, obj)
     fluid_data = @timed fluid(n, m, probs, obj)
-    
+
     touch("$dir/results_$m.txt")
     open("$dir/results_$m.txt", "w") do io
         write(io, "$(fluid_data.time)\n")
@@ -653,12 +653,9 @@ m = parse(Int, ARGS[1])
 i = parse(Int, ARGS[2])
 if i == 0
     main(m, i)
-elseif i < 4
-    main(m, 2 * i-1)
-    main(m, 2 * i)
+elseif i < 8
+    main(m, i)
 
-elseif i == 4
-    main(m, 7)
 elseif i == -1
     for m_new in [10, 30, 100, 300, 1000]
         redo_fluid(m)
