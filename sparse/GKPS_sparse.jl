@@ -23,13 +23,10 @@ function gkps_round_complete(X::SparseMatrixCSC{<:Real, <:Integer}, nU::Int, nV:
         eps::Float64 = 1e-12,
         check::Bool = true)
 
-    # Extract strictly O(E) components
     I, J, V = findnz(X)
     m = length(V)
-    
     x = Vector{Float64}(undef, m)
     
-    # Clean numerical dust initially to prevent saturating nodes from breaking constraints
     @inbounds for e in 1:m
         xe = Float64(V[e])
         if xe ≤ eps
@@ -45,63 +42,86 @@ function gkps_round_complete(X::SparseMatrixCSC{<:Real, <:Integer}, nU::Int, nV:
         ok || error(msg)
     end
 
-    while true
-        frac_edges = Int[]
-        @inbounds for e in 1:m
-            if (x[e] > eps) && (x[e] < 1.0 - eps)
-                push!(frac_edges, e)
-            end
+    # 1. PREALLOCATE AND BUILD GRAPH EXACTLY ONCE
+    adjU = [Int[] for _ in 1:nU]
+    adjV = [Int[] for _ in 1:nV]
+    degU = zeros(Int, nU)
+    degV = zeros(Int, nV)
+    
+    active_frac = 0
+    @inbounds for e in 1:m
+        if x[e] > eps && x[e] < 1.0 - eps
+            push!(adjU[I[e]], e)
+            push!(adjV[J[e]], e)
+            degU[I[e]] += 1
+            degV[J[e]] += 1
+            active_frac += 1
         end
-        isempty(frac_edges) && break
+    end
 
-        # Build adjacency of fractional support graph H
-        adjU = [Int[] for _ in 1:nU]
-        adjV = [Int[] for _ in 1:nV]
-        degU = zeros(Int, nU)
-        degV = zeros(Int, nV)
+    # 2. PREALLOCATE WORKSPACE ARRAYS (Zero inner-loop allocations)
+    N = nU + nV
+    state = zeros(Int, N)
+    parentV = zeros(Int, N)
+    parentE = zeros(Int, N)
+    visited = falses(N)
+    
+    stack = Tuple{Int,Int}[]
+    sizehint!(stack, N)
+    q = Int[]
+    sizehint!(q, N)
+    visited_nodes = Int[]
+    sizehint!(visited_nodes, N)
 
-        @inbounds for e in frac_edges
-            i = I[e]
-            j = J[e]
-            push!(adjU[i], e)
-            push!(adjV[j], e)
-            degU[i] += 1
-            degV[j] += 1
+    # 3. FAST IN-PLACE LOOP
+    while active_frac > 0
+        Eseq = find_cycle_edges(adjU, adjV, degU, degV, nU, nV, I, J, x, eps, state, parentV, parentE, stack, visited_nodes)
+        
+        # O(|V_visited|) cleanup instead of O(|V|)
+        @inbounds for v in visited_nodes
+            state[v] = 0
         end
 
-        # Prefer an even cycle if one exists; otherwise take a leaf-to-leaf path
-        Eseq = find_cycle_edges(adjU, adjV, degU, degV, nU, nV, I, J)
         if Eseq === nothing
-            Eseq = find_leaf_to_leaf_path(adjU, adjV, degU, degV, nU, nV, I, J)
+            Eseq = find_leaf_to_leaf_path(adjU, adjV, degU, degV, nU, nV, I, J, x, eps, visited, parentV, parentE, q, visited_nodes)
+            @inbounds for v in visited_nodes
+                visited[v] = false
+            end
         end
         @assert Eseq !== nothing
 
-        # Single-edge component: Bernoulli rounding
         if length(Eseq) == 1
             e = Eseq[1]
             x[e] = (rand(rng) < x[e]) ? 1.0 : 0.0
-            continue
+            degU[I[e]] -= 1
+            degV[J[e]] -= 1
+            active_frac -= 1
+        else
+            gkps_update!(x, Eseq; rng=rng, eps=eps)
+            # Update degrees incrementally ONLY for edges that just got fixed
+            for e in Eseq
+                if x[e] ≤ eps || x[e] ≥ 1.0 - eps
+                    degU[I[e]] -= 1
+                    degV[J[e]] -= 1
+                    active_frac -= 1
+                end
+            end
         end
-
-        # Otherwise do GKPS alternating update
-        gkps_update!(x, Eseq; rng=rng, eps=eps)
     end
 
-    # Snap the final structure cleanly to exact {0,1}
-    I_res = Int[]
-    J_res = Int[]
-    V_res = Float64[]
+    # Finally, construct result cleanly
+    I_res = Int[]; J_res = Int[]; V_res = Float64[]
     chosen = Tuple{Int,Int}[]
     
     @inbounds for e in 1:m
-        if x[e] ≤ eps
-            x[e] = 0.0
-        elseif x[e] ≥ 1.0 - eps
+        if x[e] ≥ 1.0 - eps
             x[e] = 1.0
             push!(I_res, I[e])
             push!(J_res, J[e])
             push!(V_res, 1.0)
             push!(chosen, (I[e], J[e]))
+        else
+            x[e] = 0.0
         end
     end
     
@@ -193,58 +213,66 @@ end
 
 
 # ------------------------- Cycle finding (DFS) -------------------------
-
-function find_cycle_edges(adjU, adjV, degU, degV, nU::Int, nV::Int, I::Vector{Int}, J::Vector{Int})
+function find_cycle_edges(adjU, adjV, degU, degV, nU::Int, nV::Int, I, J, x, eps, state, parentV, parentE, stack, visited_nodes)
+    empty!(stack)
+    empty!(visited_nodes)
     N = nU + nV
-    deg = zeros(Int, N)
-    @inbounds for i in 1:nU; deg[i] = degU[i]; end
-    @inbounds for j in 1:nV; deg[nU+j] = degV[j]; end
-
-    state   = zeros(Int, N)     # 0 unvisited, 1 in stack, 2 done
-    parentV = zeros(Int, N)
-    parentE = zeros(Int, N)
-
+    
     for s in 1:N
-        deg[s] == 0 && continue
-        state[s] != 0 && continue
+        d = (s ≤ nU) ? degU[s] : degV[s - nU]
+        if d == 0 || state[s] != 0
+            continue
+        end
 
-        stack = Tuple{Int,Int}[]   # (vertex, next-neighbor-index)
         push!(stack, (s, 1))
         state[s] = 1
         parentV[s] = 0
         parentE[s] = 0
+        push!(visited_nodes, s)
 
         while !isempty(stack)
             v, idx = stack[end]
             inc = incident_edges(v, adjU, adjV, nU)
-            if idx > length(inc)
+            
+            valid_edge = false
+            local e, w
+            while idx ≤ length(inc)
+                e = inc[idx]
+                idx += 1
+                
+                # Lazy skip of mathematically fixed edges
+                if x[e] > eps && x[e] < 1.0 - eps
+                    w = other_vertex(e, v, nU, I, J)
+                    if w != parentV[v]
+                        valid_edge = true
+                        break
+                    end
+                end
+            end
+            
+            stack[end] = (v, idx) # save updated iterator
+
+            if !valid_edge
                 state[v] = 2
                 pop!(stack)
                 continue
             end
-
-            # advance iterator position
-            stack[end] = (v, idx + 1)
-
-            e = inc[idx]
-            w = other_vertex(e, v, nU, I, J)
 
             if state[w] == 0
                 state[w] = 1
                 parentV[w] = v
                 parentE[w] = e
                 push!(stack, (w, 1))
-            elseif state[w] == 1 && parentV[v] != w
-                # Found back-edge to an ancestor in current DFS stack => cycle
+                push!(visited_nodes, w)
+            elseif state[w] == 1
                 edges = Int[]
                 cur = v
                 while cur != w
-                    pe = parentE[cur]
-                    push!(edges, pe)
+                    push!(edges, parentE[cur])
                     cur = parentV[cur]
                 end
-                reverse!(edges)         # now edges go from w to v
-                push!(edges, e)         # close cycle (v,w)
+                reverse!(edges)
+                push!(edges, e)
                 return edges
             end
         end
@@ -252,51 +280,47 @@ function find_cycle_edges(adjU, adjV, degU, degV, nU::Int, nV::Int, I::Vector{In
     return nothing
 end
 
-
-# ------------------------- Leaf-to-leaf path in a forest (BFS) -------------------------
-
-function find_leaf_to_leaf_path(adjU, adjV, degU, degV, nU::Int, nV::Int, I::Vector{Int}, J::Vector{Int})
+function find_leaf_to_leaf_path(adjU, adjV, degU, degV, nU::Int, nV::Int, I, J, x, eps, visited, parentV, parentE, q, visited_nodes)
+    empty!(visited_nodes)
     N = nU + nV
-    deg = zeros(Int, N)
-    @inbounds for i in 1:nU; deg[i] = degU[i]; end
-    @inbounds for j in 1:nV; deg[nU+j] = degV[j]; end
-
     start = 0
     @inbounds for v in 1:N
-        if deg[v] == 1
+        d = (v ≤ nU) ? degU[v] : degV[v - nU]
+        if d == 1
             start = v
             break
         end
     end
-    @assert start != 0 "No leaf found; this should not happen if support is acyclic and nonempty."
+    @assert start != 0 "No leaf found."
 
-    parentV = fill(0, N)
-    parentE = fill(0, N)
-    visited = falses(N)
-
-    q = Int[]
+    empty!(q)
     push!(q, start)
     visited[start] = true
-
+    push!(visited_nodes, start)
+    
     target = 0
     head = 1
     while head ≤ length(q) && target == 0
         v = q[head]; head += 1
         for e in incident_edges(v, adjU, adjV, nU)
-            w = other_vertex(e, v, nU, I, J)
-            if !visited[w]
-                visited[w] = true
-                parentV[w] = v
-                parentE[w] = e
-                push!(q, w)
-                if deg[w] == 1 && w != start
-                    target = w
-                    break
+            if x[e] > eps && x[e] < 1.0 - eps
+                w = other_vertex(e, v, nU, I, J)
+                if !visited[w]
+                    visited[w] = true
+                    parentV[w] = v
+                    parentE[w] = e
+                    push!(q, w)
+                    push!(visited_nodes, w)
+                    
+                    dw = (w ≤ nU) ? degU[w] : degV[w - nU]
+                    if dw == 1 && w != start
+                        target = w
+                        break
+                    end
                 end
             end
         end
     end
-    @assert target != 0 "Failed to find a second leaf (unexpected in a nontrivial forest component)."
 
     edges = Int[]
     cur = target

@@ -34,7 +34,7 @@ function alternative_sol_straight(n, m, probs, obj)
     set_attribute(model, "MemLimit", 64.0)
     set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
-    set_optimizer_attribute(model, "MIPGap", 0.01)
+    set_optimizer_attribute(model, "MIPGap", 0.02)
     
     # 3D Variables constrained specifically to edges where obj > 0
     triplets = Tuple{Int, Int, Int}[]
@@ -103,7 +103,7 @@ function point8_sol_straight(n, m, probs, obj)
     set_attribute(model, "MemLimit", 64.0)
     set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
-    set_optimizer_attribute(model, "MIPGap", 0.01)
+    set_optimizer_attribute(model, "MIPGap", 0.02)
 
     tuples = Tuple{Int, Int, Int, Int, Int}[]
     for k in 1:m
@@ -246,7 +246,7 @@ function one_stage_opt(n, m, probs, obj)
     set_attribute(model, "MemLimit", 64.0)
     set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
-    set_optimizer_attribute(model, "MIPGap", 0.01)
+    set_optimizer_attribute(model, "MIPGap", 0.02)
     
     @variable(model, x[e in edges], Bin)
     
@@ -281,8 +281,9 @@ function fluid(n, m, probs, obj)
     model = Model(() -> Gurobi.Optimizer(GUROBI_ENV))
     set_attribute(model, "MemLimit", 64.0)
     set_attribute(model, "TimeLimit", 3600.0)
-    set_optimizer_attribute(model, "MIPGap", 0.01)
+    set_optimizer_attribute(model, "MIPGap", 0.02)
     set_optimizer_attribute(model, "Threads", 8)
+    set_optimizer_attribute(model, "MIPFocus", 1)
     
     @variable(model, x[e in edges], Bin)
     @variable(model, 0 <= y[e in edges] <= 1)
@@ -329,7 +330,7 @@ function SAA_no_opt(n, m, probs, obj, s=200)
     set_attribute(model, "MemLimit", 64.0)
     set_attribute(model, "TimeLimit", 3600.0)
     set_optimizer_attribute(model, "Threads", 8)
-    set_optimizer_attribute(model, "MIPGap", 0.01)
+    set_optimizer_attribute(model, "MIPGap", 0.02)
     
     @variable(model, x[e in edges] , Bin)
     @variable(model, 0 <= y[e in edges, 1:s] <= 1)
