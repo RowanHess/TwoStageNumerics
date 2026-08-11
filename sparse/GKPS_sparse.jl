@@ -5,19 +5,6 @@ export gkps_round_complete
 using Random
 using SparseArrays
 
-"""
-    gkps_round_complete(X::SparseMatrixCSC, nU, nV; rng=Random.default_rng(), eps=1e-12, check=true)
-
-GKPS dependent rounding for a fractional bipartite matching.
-
-Input:
-- X: A SparseMatrixCSC representing the fractional assignment.
-- Assumes 0 <= X[i,j] <= 1 and row/col sums <= 1 (if check=true).
-
-Output:
-- X_round::SparseMatrixCSC rounded to {0,1} (up to eps)
-- chosen_edges::Vector{Tuple{Int,Int}} pairs (i,j) with X_round edge = 1
-"""
 function gkps_round_complete(X::SparseMatrixCSC{<:Real, <:Integer}, nU::Int, nV::Int;
         rng::AbstractRNG = Random.default_rng(),
         eps::Float64 = 1e-12,
@@ -42,25 +29,28 @@ function gkps_round_complete(X::SparseMatrixCSC{<:Real, <:Integer}, nU::Int, nV:
         ok || error(msg)
     end
 
-    # 1. PREALLOCATE AND BUILD GRAPH EXACTLY ONCE
-    adjU = [Int[] for _ in 1:nU]
-    adjV = [Int[] for _ in 1:nV]
-    degU = zeros(Int, nU)
-    degV = zeros(Int, nV)
+    N = nU + nV
+
+    # --- Preallocate Flat Adjacency List Workspace ---
+    head = zeros(Int, N)
+    deg = zeros(Int, N)
     
-    active_frac = 0
+    next_arc = zeros(Int, m * 2)
+    to = zeros(Int, m * 2)
+    edge_id = zeros(Int, m * 2)
+    
+    active_edges = Int[]
+    sizehint!(active_edges, m)
     @inbounds for e in 1:m
         if x[e] > eps && x[e] < 1.0 - eps
-            push!(adjU[I[e]], e)
-            push!(adjV[J[e]], e)
-            degU[I[e]] += 1
-            degV[J[e]] += 1
-            active_frac += 1
+            push!(active_edges, e)
         end
     end
-
-    # 2. PREALLOCATE WORKSPACE ARRAYS (Zero inner-loop allocations)
-    N = nU + nV
+    
+    active_nodes = Int[]
+    sizehint!(active_nodes, N)
+    
+    # --- Preallocate DFS/BFS Workspace ---
     state = zeros(Int, N)
     parentV = zeros(Int, N)
     parentE = zeros(Int, N)
@@ -70,46 +60,71 @@ function gkps_round_complete(X::SparseMatrixCSC{<:Real, <:Integer}, nU::Int, nV:
     sizehint!(stack, N)
     q = Int[]
     sizehint!(q, N)
-    visited_nodes = Int[]
-    sizehint!(visited_nodes, N)
+    visited_states = Int[]
+    sizehint!(visited_states, N)
 
-    # 3. FAST IN-PLACE LOOP
-    while active_frac > 0
-        Eseq = find_cycle_edges(adjU, adjV, degU, degV, nU, nV, I, J, x, eps, state, parentV, parentE, stack, visited_nodes)
+    # --- Main GKPS Loop ---
+    while !isempty(active_edges)
         
-        # O(|V_visited|) cleanup instead of O(|V|)
-        @inbounds for v in visited_nodes
-            state[v] = 0
-        end
-
-        if Eseq === nothing
-            Eseq = find_leaf_to_leaf_path(adjU, adjV, degU, degV, nU, nV, I, J, x, eps, visited, parentV, parentE, q, visited_nodes)
-            @inbounds for v in visited_nodes
-                visited[v] = false
+        # 1. In-place Graph Build & Active Edge Filtering (O(E_active))
+        arc_idx = 1
+        keep_idx = 1
+        @inbounds for i in 1:length(active_edges)
+            e = active_edges[i]
+            if x[e] > eps && x[e] < 1.0 - eps
+                active_edges[keep_idx] = e
+                keep_idx += 1
+                
+                u = I[e]
+                v = nU + J[e]
+                
+                to[arc_idx] = v
+                edge_id[arc_idx] = e
+                next_arc[arc_idx] = head[u]
+                head[u] = arc_idx
+                arc_idx += 1
+                
+                to[arc_idx] = u
+                edge_id[arc_idx] = e
+                next_arc[arc_idx] = head[v]
+                head[v] = arc_idx
+                arc_idx += 1
+                
+                if deg[u] == 0 push!(active_nodes, u) end
+                deg[u] += 1
+                
+                if deg[v] == 0 push!(active_nodes, v) end
+                deg[v] += 1
             end
         end
-        @assert Eseq !== nothing
-
+        resize!(active_edges, keep_idx - 1)
+        
+        isempty(active_edges) && break
+        
+        # 2. Find Cycle or Leaf-to-Leaf Path
+        Eseq = find_cycle_edges(head, next_arc, to, edge_id, state, parentV, parentE, stack, active_nodes, visited_states)
+        
+        if Eseq === nothing
+            Eseq = find_leaf_to_leaf_path(head, next_arc, to, edge_id, deg, visited, parentV, parentE, q, active_nodes, visited_states)
+        end
+        
+        # 3. Update Fractional Variables
         if length(Eseq) == 1
             e = Eseq[1]
             x[e] = (rand(rng) < x[e]) ? 1.0 : 0.0
-            degU[I[e]] -= 1
-            degV[J[e]] -= 1
-            active_frac -= 1
         else
             gkps_update!(x, Eseq; rng=rng, eps=eps)
-            # Update degrees incrementally ONLY for edges that just got fixed
-            for e in Eseq
-                if x[e] ≤ eps || x[e] ≥ 1.0 - eps
-                    degU[I[e]] -= 1
-                    degV[J[e]] -= 1
-                    active_frac -= 1
-                end
-            end
         end
+        
+        # 4. Clean Graph Trackers Strictly for Touched Nodes (O(V_active))
+        @inbounds for u in active_nodes
+            head[u] = 0
+            deg[u] = 0
+        end
+        empty!(active_nodes)
     end
 
-    # Finally, construct result cleanly
+    # Build Final Sparse Matrix
     I_res = Int[]; J_res = Int[]; V_res = Float64[]
     chosen = Tuple{Int,Int}[]
     
@@ -128,58 +143,165 @@ function gkps_round_complete(X::SparseMatrixCSC{<:Real, <:Integer}, nU::Int, nV:
     return sparse(I_res, J_res, V_res, nU, nV), chosen
 end
 
+# ------------------------- Search Functions -------------------------
 
-# ------------------------- Feasibility check -------------------------
-
-function check_feasible_sparse(x::Vector{Float64}, I::Vector{Int}, J::Vector{Int}, nU::Int, nV::Int; tol::Float64=1e-9)
-    m = length(x)
-    rowsum = zeros(Float64, nU)
-    colsum = zeros(Float64, nV)
-
-    @inbounds for e in 1:m
-        xe = x[e]
-        if xe < -tol || xe > 1.0 + tol
-            return (false, "x[$e] = $xe not in [0,1] (tol=$tol)")
+function find_cycle_edges(head::Vector{Int}, next_arc::Vector{Int}, to::Vector{Int}, edge_id::Vector{Int},
+                          state::Vector{Int}, parentV::Vector{Int}, parentE::Vector{Int}, 
+                          stack::Vector{Tuple{Int,Int}}, active_nodes::Vector{Int}, visited_states::Vector{Int})
+    empty!(stack)
+    empty!(visited_states)
+    
+    @inbounds for s in active_nodes
+        if state[s] != 0
+            continue
         end
-        rowsum[I[e]] += xe
-        colsum[J[e]] += xe
-    end
-    @inbounds for i in 1:nU
-        if rowsum[i] > 1.0 + tol
-            return (false, "row $i sum = $(rowsum[i]) exceeds 1 (tol=$tol)")
+        
+        push!(stack, (s, head[s]))
+        state[s] = 1
+        parentV[s] = 0
+        parentE[s] = 0
+        push!(visited_states, s)
+        
+        while !isempty(stack)
+            v, arc = stack[end]
+            
+            e_val::Int = 0
+            w_val::Int = 0
+            valid_edge::Bool = false
+            
+            while arc != 0
+                w = to[arc]
+                e = edge_id[arc]
+                n_arc = next_arc[arc]
+                
+                if w != parentV[v]
+                    e_val = e
+                    w_val = w
+                    valid_edge = true
+                    stack[end] = (v, n_arc)
+                    break
+                end
+                arc = n_arc
+            end
+            
+            if !valid_edge
+                state[v] = 2
+                pop!(stack)
+                continue
+            end
+            
+            w = w_val
+            e = e_val
+            
+            if state[w] == 0
+                state[w] = 1
+                parentV[w] = v
+                parentE[w] = e
+                push!(stack, (w, head[w]))
+                push!(visited_states, w)
+            elseif state[w] == 1
+                # Cycle found!
+                edges = Int[]
+                cur = v
+                while cur != w
+                    push!(edges, parentE[cur])
+                    cur = parentV[cur]
+                end
+                reverse!(edges)
+                push!(edges, e)
+                
+                for node in visited_states
+                    state[node] = 0
+                end
+                return edges
+            end
         end
     end
-    @inbounds for j in 1:nV
-        if colsum[j] > 1.0 + tol
-            return (false, "col $j sum = $(colsum[j]) exceeds 1 (tol=$tol)")
-        end
+    
+    @inbounds for node in visited_states
+        state[node] = 0
     end
-    return (true, "")
+    return nothing
 end
 
+function find_leaf_to_leaf_path(head::Vector{Int}, next_arc::Vector{Int}, to::Vector{Int}, edge_id::Vector{Int},
+                                deg::Vector{Int}, visited::BitVector, parentV::Vector{Int}, parentE::Vector{Int}, 
+                                q::Vector{Int}, active_nodes::Vector{Int}, visited_states::Vector{Int})
+    empty!(visited_states)
+    
+    start = 0
+    @inbounds for v in active_nodes
+        if deg[v] == 1
+            start = v
+            break
+        end
+    end
+    
+    empty!(q)
+    push!(q, start)
+    visited[start] = true
+    push!(visited_states, start)
+    
+    target = 0
+    head_q = 1
+    @inbounds while head_q ≤ length(q) && target == 0
+        v = q[head_q]
+        head_q += 1
+        
+        arc = head[v]
+        while arc != 0
+            w = to[arc]
+            e = edge_id[arc]
+            
+            if !visited[w]
+                visited[w] = true
+                parentV[w] = v
+                parentE[w] = e
+                push!(q, w)
+                push!(visited_states, w)
+                
+                if deg[w] == 1 && w != start
+                    target = w
+                    break
+                end
+            end
+            arc = next_arc[arc]
+        end
+    end
+    
+    edges = Int[]
+    cur = target
+    @inbounds while cur != start
+        push!(edges, parentE[cur])
+        cur = parentV[cur]
+    end
+    reverse!(edges)
+    
+    @inbounds for node in visited_states
+        visited[node] = false
+    end
+    
+    return edges
+end
 
-# ------------------------- GKPS alternating update -------------------------
+# ------------------------- Updates / Sanity Checks -------------------------
 
 function gkps_update!(x::Vector{Float64}, Eseq::Vector{Int}; rng::AbstractRNG, eps::Float64)
     k = length(Eseq)
-    @assert k ≥ 2
-
     α = Inf
     β = Inf
-
+    
     @inbounds for t in 1:k
         e = Eseq[t]
         s = isodd(t) ? +1.0 : -1.0
         xe = x[e]
-        α = min(α, (s > 0) ? (1.0 - xe) : xe)      # for direction A
-        β = min(β, (s > 0) ? xe : (1.0 - xe))      # for direction B
+        α = min(α, (s > 0) ? (1.0 - xe) : xe)
+        β = min(β, (s > 0) ? xe : (1.0 - xe))
     end
 
     α = max(0.0, α)
     β = max(0.0, β)
-    if α + β ≤ eps
-        return nothing
-    end
+    if α + β ≤ eps return end
 
     pA = β / (α + β)
     if rand(rng) < pA
@@ -195,141 +317,28 @@ function gkps_update!(x::Vector{Float64}, Eseq::Vector{Int}; rng::AbstractRNG, e
             x[e] = clamp(x[e] - s*β, 0.0, 1.0)
         end
     end
-    return nothing
 end
 
+function check_feasible_sparse(x::Vector{Float64}, I::Vector{Int}, J::Vector{Int}, nU::Int, nV::Int; tol::Float64=1e-9)
+    m = length(x)
+    rowsum = zeros(Float64, nU)
+    colsum = zeros(Float64, nV)
 
-# ------------------------- Graph helpers (unified vertex IDs) -------------------------
-
-@inline function other_vertex(e::Int, curr::Int, nU::Int, I::Vector{Int}, J::Vector{Int})
-    uvid = I[e]
-    vvid = nU + J[e]
-    return (curr == uvid) ? vvid : uvid
-end
-
-@inline function incident_edges(vid::Int, adjU, adjV, nU::Int)
-    vid ≤ nU ? adjU[vid] : adjV[vid - nU]
-end
-
-
-# ------------------------- Cycle finding (DFS) -------------------------
-function find_cycle_edges(adjU, adjV, degU, degV, nU::Int, nV::Int, I, J, x, eps, state, parentV, parentE, stack, visited_nodes)
-    empty!(stack)
-    empty!(visited_nodes)
-    N = nU + nV
-    
-    for s in 1:N
-        d = (s ≤ nU) ? degU[s] : degV[s - nU]
-        if d == 0 || state[s] != 0
-            continue
+    @inbounds for e in 1:m
+        xe = x[e]
+        if xe < -tol || xe > 1.0 + tol
+            return (false, "x[$e] = $xe not in [0,1] (tol=$tol)")
         end
-
-        push!(stack, (s, 1))
-        state[s] = 1
-        parentV[s] = 0
-        parentE[s] = 0
-        push!(visited_nodes, s)
-
-        while !isempty(stack)
-            v, idx = stack[end]
-            inc = incident_edges(v, adjU, adjV, nU)
-            
-            valid_edge = false
-            local e, w
-            while idx ≤ length(inc)
-                e = inc[idx]
-                idx += 1
-                
-                # Lazy skip of mathematically fixed edges
-                if x[e] > eps && x[e] < 1.0 - eps
-                    w = other_vertex(e, v, nU, I, J)
-                    if w != parentV[v]
-                        valid_edge = true
-                        break
-                    end
-                end
-            end
-            
-            stack[end] = (v, idx) # save updated iterator
-
-            if !valid_edge
-                state[v] = 2
-                pop!(stack)
-                continue
-            end
-
-            if state[w] == 0
-                state[w] = 1
-                parentV[w] = v
-                parentE[w] = e
-                push!(stack, (w, 1))
-                push!(visited_nodes, w)
-            elseif state[w] == 1
-                edges = Int[]
-                cur = v
-                while cur != w
-                    push!(edges, parentE[cur])
-                    cur = parentV[cur]
-                end
-                reverse!(edges)
-                push!(edges, e)
-                return edges
-            end
-        end
+        rowsum[I[e]] += xe
+        colsum[J[e]] += xe
     end
-    return nothing
-end
-
-function find_leaf_to_leaf_path(adjU, adjV, degU, degV, nU::Int, nV::Int, I, J, x, eps, visited, parentV, parentE, q, visited_nodes)
-    empty!(visited_nodes)
-    N = nU + nV
-    start = 0
-    @inbounds for v in 1:N
-        d = (v ≤ nU) ? degU[v] : degV[v - nU]
-        if d == 1
-            start = v
-            break
-        end
+    @inbounds for i in 1:nU
+        if rowsum[i] > 1.0 + tol return (false, "row $i sum exceeds 1") end
     end
-    @assert start != 0 "No leaf found."
-
-    empty!(q)
-    push!(q, start)
-    visited[start] = true
-    push!(visited_nodes, start)
-    
-    target = 0
-    head = 1
-    while head ≤ length(q) && target == 0
-        v = q[head]; head += 1
-        for e in incident_edges(v, adjU, adjV, nU)
-            if x[e] > eps && x[e] < 1.0 - eps
-                w = other_vertex(e, v, nU, I, J)
-                if !visited[w]
-                    visited[w] = true
-                    parentV[w] = v
-                    parentE[w] = e
-                    push!(q, w)
-                    push!(visited_nodes, w)
-                    
-                    dw = (w ≤ nU) ? degU[w] : degV[w - nU]
-                    if dw == 1 && w != start
-                        target = w
-                        break
-                    end
-                end
-            end
-        end
+    @inbounds for j in 1:nV
+        if colsum[j] > 1.0 + tol return (false, "col $j sum exceeds 1") end
     end
-
-    edges = Int[]
-    cur = target
-    while cur != start
-        push!(edges, parentE[cur])
-        cur = parentV[cur]
-    end
-    reverse!(edges)
-    return edges
+    return (true, "")
 end
 
 end # module

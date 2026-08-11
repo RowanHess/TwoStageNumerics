@@ -112,28 +112,17 @@ function point8_sol_straight(n, m, probs, obj)
             for g in N_R[k]
                 if g != i
                     push!(tuples, (g, i, n+1, k, m+1))
+                    for l in N_S[g]
+                        if l == k; continue; end
+                        for j in N_R[l]
+                            if j == i || j==g; continue; end
+                            push!(tuples, (g, i, j, k, l))
+                        end
+                    end
                 end
             end
             push!(tuples, (n+1, i, n+1, k, m+1)) 
             
-            # Case 2: l <= m (valid 2nd active house)
-            for l in 1:m
-                if l == k; continue; end
-                for j in N_R[l]
-                    if j == i; continue; end
-                    for g in N_R[k]
-                        if g != i && g != j
-                            push!(tuples, (g, i, j, k, l))
-                        end
-                    end
-                    for g in N_R[l]
-                        if g != i && g != j && !(g in N_R[k])
-                            push!(tuples, (g, i, j, k, l))
-                        end
-                    end
-                    push!(tuples, (n+1, i, j, k, l))
-                end
-            end
         end
     end
     

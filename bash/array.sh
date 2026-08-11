@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH -a 1-8
+#SBATCH -a 1-7
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=96G
 #SBATCH --partition=mit_normal
