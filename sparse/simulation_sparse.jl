@@ -813,6 +813,51 @@ function main(m, index)
                 end
             end
         end
+    elseif index == length(functions) + 2
+        n = Int(floor(m * 1.5))
+
+        df_obj = CSV.read("$dir/obj_$m.csv", DataFrame)
+        obj = sparse(df_obj.i, df_obj.j, df_obj.obj, n, m)
+        
+        df_probs = CSV.read("$dir/probs_$m.csv", DataFrame)
+        probs = sparse(df_probs.i, df_probs.j, df_probs.probs, n, m)
+
+        # Generate Scenarios sparsely using the explicit Dictionary structure
+        s = 200
+        scenarios = Dict{Tuple{Int,Int}, BitVector}()
+        rands = rand(s)
+        I_p, J_p, V_p = findnz(probs)
+        for (i, j, p) in zip(I_p, J_p, V_p)
+            scenarios[(i,j)] = rands .< p
+        end
+        
+        for f in functions
+            sol_file = "$dir/$(f["name"])_sol_$m.csv"
+            if isfile(sol_file)
+                x_sol = read_sol(sol_file, n, m)
+                val = get_value(x_sol, scenarios, n, m, probs, obj)
+                
+                open("$dir/$(f["name"])_$m.txt", "a") do io
+                    println(io, "$(val)")
+                end
+            end
+        end
+        
+        for f in functions
+            sol_file = "$dir/$(f["name"])_sol_$m.csv"
+            if isfile(sol_file)
+                open("$dir/$(f["name"])_$m.txt", "r") do io
+                    t = parse(Float64, readline(io))
+                    v1 = parse(Float64, readline(io))
+                    v = parse(Float64, readline(io))
+                    
+                    open("$dir/presults_$m.txt", "a") do io_res
+                        println(io_res, "$(f["name"]) val: $v")
+                        println(io_res, "$(f["name"]) time: $t")
+                    end
+                end
+            end
+        end
     end
 end
 function warmup_compilation()
@@ -898,6 +943,8 @@ elseif i == -1
 
         redo_fluid(m)
     end
+elseif i == 12
+    main(m, 9)
 else
     main(m, 8)
 end
