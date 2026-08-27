@@ -583,6 +583,36 @@ function main(m, index)
             end
         end
         
+    elseif index == length(functions) + 2
+        n = Int(floor(m * 1.5))
+
+        obj = Matrix(CSV.read("$dir/obj_$m.csv", DataFrame))
+        probs = Matrix(CSV.read("$dir/probs_$m.csv", DataFrame))
+
+        scenarios = rand(200) .< (probs)
+        for f in functions
+            if isfile("$dir/$(f["name"])_sol_$m.txt")
+                x = read_sol(m, "$dir/$(f["name"])_sol_$m.txt", n)
+                val = get_value(x, scenarios, n, m, probs, obj)
+                open("$dir/$(f["name"])_$m.txt", "a") do io
+                    println(io, "$(val)")
+                end
+            end
+        end
+        for f in functions
+            if isfile("$dir/$(f["name"])_sol_$m.txt")
+                open("$dir/$(f["name"])_$m.txt", "r") do io
+                    t = parse(Float64, readline(io))
+                    v2 = parse(Float64, readline(io))
+                    v = parse(Float64, readline(io))
+                    open("$dir/presults_$m.txt", "a") do io
+                        println(io, "$(f["name"]) val: $v")
+                        println(io, "$(f["name"]) time: $t")
+                    end
+                end
+            end
+        end
+        
     end
 end
 
