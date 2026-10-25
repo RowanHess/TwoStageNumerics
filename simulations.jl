@@ -381,6 +381,16 @@ function point_8_from_fluid(n, m, p_input, obj, x, y)
     return new_a .+ x .* (1 .- use')
     
 end
+
+function fluid_crs(n, m, p_input, obj, x, y)
+    rho = 0.82636
+
+    matching, _ = GKPSCompleteBipartite.gkps_round_complete(vec(x), n, m)
+    kept = (matching .> 0.5) .& (rand(length(matching)) .< rho)
+
+    return reshape(Float64.(kept), n, m)
+end
+
 function get_value(sol, scenarios, n, m, probs, obj)
     s = size(scenarios, 3)
 
@@ -491,8 +501,8 @@ functions = [
     Dict("name" => "point_8_from_fluid", "requires_fluid" => true, "function" => point_8_from_fluid),
     Dict("name" => "efficient_567", "requires_fluid" => false, "function" => efficient_567),
     Dict("name" => "SAA_no_opt", "requires_fluid" => false, "function" => SAA_no_opt),
-    
-   
+    Dict("name" => "fluid_crs", "requires_fluid" => true, "function" => fluid_crs)
+
 ]
 
 function write_sol(x, name, m)
@@ -683,7 +693,7 @@ m = parse(Int, ARGS[1])
 i = parse(Int, ARGS[2])
 if i == 0
     main(m, i)
-elseif i < 8
+elseif i < 9
     main(m, i)
 
 elseif i == -1
@@ -691,7 +701,7 @@ elseif i == -1
         redo_fluid(m)
     end
 else
-    main(m, 8)
+    main(m, 9)
 end
 
 

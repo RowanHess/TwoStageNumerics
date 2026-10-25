@@ -572,6 +572,16 @@ function point_8_from_fluid(n, m, p_input, obj, x, y)
     return sparse(I_res, J_res, V_res, n, m)
 end
 
+function fluid_crs(n, m, p_input, obj, x, y)
+    rho = 0.82636
+
+    matching, _ = GKPSCompleteBipartite.gkps_round_complete(x, n, m)
+    I, J, _ = findnz(matching)
+    kept = rand(length(I)) .< rho
+
+    return sparse(I[kept], J[kept], ones(Float64, count(kept)), n, m)
+end
+
 function get_value(sol, scenarios::Dict{Tuple{Int,Int}, BitVector}, n, m, probs, obj)
     s = length(first(values(scenarios)))
     N_S, N_R, I, J = get_adj(obj)
@@ -708,6 +718,7 @@ functions = [
     Dict("name" => "point_8_from_fluid", "requires_fluid" => true, "function" => point_8_from_fluid),
     Dict("name" => "efficient_567", "requires_fluid" => false, "function" => efficient_567),
     Dict("name" => "SAA_no_opt", "requires_fluid" => false, "function" => SAA_no_opt),
+    Dict("name" => "fluid_crs", "requires_fluid" => true, "function" => fluid_crs)
     
    
 ]
@@ -935,7 +946,7 @@ m = parse(Int, ARGS[1])
 i = parse(Int, ARGS[2])
 if i == 0
     main(m, i)
-elseif i < 8
+elseif i < 9
     main(m, i)
 
 elseif i == -1
@@ -944,9 +955,9 @@ elseif i == -1
         redo_fluid(m)
     end
 elseif i == 12
-    main(m, 9)
+    main(m, 10)
 else
-    main(m, 8)
+    main(m, 9)
 end
 
 # for i=0:8
