@@ -4,8 +4,8 @@
 #SBATCH --mem=96G
 #SBATCH --partition=mit_normal
 #SBATCH --time=0-02:10
-#SBATCH -o run_initial.out
-#SBATCH -e run_initial.err
+#SBATCH -o run_initial_%j.out
+#SBATCH -e run_initial_%j.err
 
 source ~/.bashrc
 
@@ -15,4 +15,3 @@ module load gurobi
 
 #Run the script as usual
 julia -t 8 sparse/simulation_sparse.jl $1 0
-

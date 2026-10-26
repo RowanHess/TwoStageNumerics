@@ -6,7 +6,7 @@
 INIT_ID=$(sbatch --parsable bash/initialize.sh $1)
 echo "Submitted initialize.sh as job $INIT_ID"
 
-ARRAY_ID=$(sbatch --parsable --dependency=afterok:$INIT_ID bash/array.sh $1)
+ARRAY_ID=$(sbatch --parsable --array=1-8 --dependency=afterok:$INIT_ID bash/array.sh $1)
 echo "Submitted array.sh as job $ARRAY_ID"
 
 ACCUM_ID=$(sbatch --parsable --dependency=afterany:$ARRAY_ID bash/accumulate.sh $1)

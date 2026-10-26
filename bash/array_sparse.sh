@@ -1,12 +1,12 @@
 #!/bin/bash
 
-#SBATCH -a 1-7
+#SBATCH -a 1-8
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=96G
 #SBATCH --partition=mit_normal
 #SBATCH --time=0-01:10
-#SBATCH -o run_\%a.out
-#SBATCH -e run_\%a.err
+#SBATCH -o run_%A_%a.out
+#SBATCH -e run_%A_%a.err
 
 
 source ~/.bashrc
