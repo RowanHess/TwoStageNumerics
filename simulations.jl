@@ -479,7 +479,7 @@ function initialize(m)
     open("$dir/results_$m.txt", "w") do io
         write(io, "$(fluid_data.time)\n")
         write(io, "fluid_ub: $(fluid_data.value[3])\n")
-        write(io, "linear_time: $(linear.time)\n")
+        write(io, "linear_time: $(linear_data.time)\n")
     end
 
     df = DataFrame(obj, :auto)
