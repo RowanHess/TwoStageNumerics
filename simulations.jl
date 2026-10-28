@@ -231,6 +231,15 @@ function efficient_567(n, m, probs, obj)
     return X .* (x_prime * q') + Y .* (y_prime * (1 .- q)')
 end
 
+function efficient_667(n, m, probs, obj)
+    x, y = linear(n, m, probs, obj, false)
+
+    # Round x and y together, using separate right-side copies for each type.
+    xy_round, _ = GKPSCompleteBipartite.gkps_round_complete(vec(hcat(x, y)), n, 2m)
+    xy_round = reshape(xy_round, n, 2m)
+    return Matrix(view(xy_round, :, 1:m))
+end
+
 function alt_sol_from_fluid(n, m, probs, obj,x, y)
     #x, y = fluid(n, m, probs, obj)
 
@@ -499,7 +508,7 @@ functions = [
     Dict("name" => "alt_sol_from_fluid", "requires_fluid" => true, "function" => alt_sol_from_fluid),
     Dict("name" => "point8_sol_straight", "requires_fluid" => false, "function" => point8_sol_straight),
     Dict("name" => "point_8_from_fluid", "requires_fluid" => true, "function" => point_8_from_fluid),
-    Dict("name" => "efficient_567", "requires_fluid" => false, "function" => efficient_567),
+    Dict("name" => "efficient_567", "requires_fluid" => false, "function" => efficient_667),
     Dict("name" => "SAA_no_opt", "requires_fluid" => false, "function" => SAA_no_opt),
     Dict("name" => "fluid_crs", "requires_fluid" => true, "function" => fluid_crs)
 
